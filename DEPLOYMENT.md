@@ -87,7 +87,7 @@ If you see an error about `tiktoken` requiring a Rust compiler:
   5. Save and redeploy
 - **Additional Fixes Applied:**
   - `runtime.txt` file created to pin Python to 3.12.7 (may not be automatically recognized by Streamlit Cloud)
-  - `tiktoken` pinned to version 0.8.0 in `requirements.txt` (known to have prebuilt wheels)
+  - `tiktoken` constrained to `>=0.7.0,<0.8.0` in `requirements.txt` to satisfy `open-interpreter`'s dependency requirements while ensuring compatibility
 - **Why this works:** Python 3.12 and 3.11 have prebuilt wheels for `tiktoken`, avoiding the need for Rust compilation
 
 ### Alternative Hosting Options:
