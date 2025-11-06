@@ -12,6 +12,8 @@ import traceback
 import sys
 import time
 import hashlib
+import threading
+from functools import wraps
 
 # Page configuration
 st.set_page_config(
@@ -182,9 +184,44 @@ def extract_main_answer(response_text: str) -> str:
     
     return main_answer.strip()
 
-def call_openai_code_interpreter(prompt: str, file_paths: List[str], output_folder: str) -> tuple:
+def timeout_handler(timeout_seconds: int):
+    """Decorator to add timeout to a function call"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = [None]
+            exception = [None]
+            
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                except Exception as e:
+                    exception[0] = e
+            
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            thread.join(timeout=timeout_seconds)
+            
+            if thread.is_alive():
+                # Thread is still running, meaning it timed out
+                raise TimeoutError(f"Operation timed out after {timeout_seconds} seconds. The request may be too complex or the files too large. Try simplifying your request or breaking it into smaller tasks.")
+            
+            if exception[0]:
+                raise exception[0]
+            
+            return result[0]
+        return wrapper
+    return decorator
+
+def call_openai_code_interpreter(prompt: str, file_paths: List[str], output_folder: str, timeout_seconds: int = 300) -> tuple:
     """
     Call Open Interpreter to analyze files and execute code
+    Args:
+        prompt: User's prompt/request
+        file_paths: List of file paths to analyze
+        output_folder: Folder to save output files
+        timeout_seconds: Maximum time to wait for execution (default: 300 seconds = 5 minutes)
     Returns: (main_answer, intermediate_steps, generated_files, answer_file_path)
     """
     api_key = load_api_key()
@@ -205,6 +242,9 @@ def call_openai_code_interpreter(prompt: str, file_paths: List[str], output_fold
     interpreter.api_key = api_key
     interpreter.auto_run = True  # Automatically execute code
     interpreter.verbose = False   # Reduce output for Streamlit
+    # Ensure interpreter completes and doesn't hang
+    if hasattr(interpreter, 'max_executions'):
+        interpreter.max_executions = 50  # Limit number of code executions to prevent infinite loops
     
     # Create context about available files
     file_context = get_file_context(file_paths)
@@ -230,6 +270,13 @@ IMPORTANT INSTRUCTIONS:
 6. Provide clear explanations of what you're doing
 7. Answer in Russian
 
+CRITICAL RESTRICTIONS:
+- DO NOT create HTML files (df.to_html() is FORBIDDEN)
+- DO NOT use webbrowser.open() or any function that opens files in a browser
+- DO NOT use os.startfile() or subprocess to open files
+- When displaying dataframes, use print() or df.head() instead of creating HTML files
+- Save results ONLY as Excel (.xlsx) or CSV (.csv) files, NEVER as HTML
+
 CRITICAL: You MUST create a summary file at the end of your analysis!
 8. At the end of your analysis, you MUST write a summary file to: '{summary_filepath}'
 9. Use this EXACT code to create the summary file:
@@ -250,18 +297,56 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
         output_buffer = io.StringIO()
         old_stdout = sys.stdout
         
-        try:
+        # Define the interpreter chat function with timeout
+        @timeout_handler(timeout_seconds)
+        def run_interpreter():
             sys.stdout = output_buffer
-            
-            # Use Open Interpreter to chat and execute code
-            # Open Interpreter will execute code and print output
-            interpreter.chat(full_prompt)
-            
-            # Get the captured output
+            try:
+                # Reset interpreter to ensure clean state before each run
+                if hasattr(interpreter, 'reset'):
+                    interpreter.reset()
+                
+                # Run the interpreter chat - it should return after completing
+                # Some versions of open-interpreter may return a value, others don't
+                result = interpreter.chat(full_prompt)
+                return result
+            except Exception as e:
+                # Log any exceptions but don't let them stop execution
+                print(f"Interpreter error: {str(e)}", file=output_buffer)
+                raise
+            finally:
+                sys.stdout = old_stdout
+        
+        try:
+            # Run interpreter with timeout
+            run_interpreter()
+            # Get the captured output after execution
             response_text = output_buffer.getvalue()
             
-        finally:
+            # Ensure stdout is properly restored
+            if sys.stdout != old_stdout:
+                sys.stdout = old_stdout
+            
+        except TimeoutError as e:
+            # Restore stdout
             sys.stdout = old_stdout
+            error_msg = f"⏱️ Timeout Error: {str(e)}\n\n" + \
+                       f"The operation exceeded the time limit of {timeout_seconds} seconds.\n\n" + \
+                       "Possible solutions:\n" + \
+                       "1. Simplify your request or break it into smaller tasks\n" + \
+                       "2. Reduce the size of input files\n" + \
+                       "3. Increase the timeout limit in the configuration\n" + \
+                       "4. Check if the files are too large or complex"
+            return error_msg, error_msg, [], None
+        except Exception as e:
+            # Restore stdout
+            sys.stdout = old_stdout
+            error_msg = f"Error during execution: {str(e)}\n{traceback.format_exc()}"
+            return error_msg, error_msg, [], None
+        finally:
+            # Ensure stdout is restored
+            if sys.stdout != old_stdout:
+                sys.stdout = old_stdout
         
         # Check for newly generated files
         generated_files = []
@@ -371,6 +456,21 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # Timeout configuration
+    st.subheader("⏱️ Timeout Settings")
+    timeout_minutes = st.number_input(
+        "Request Timeout (minutes)",
+        min_value=1,
+        max_value=60,
+        value=st.session_state.get('timeout_seconds', 300) // 60,
+        help="Maximum time to wait for Excel generation (default: 5 minutes). Increase for complex operations or large files.",
+        key="timeout_input"
+    )
+    st.session_state.timeout_seconds = timeout_minutes * 60
+    st.caption(f"Current timeout: {timeout_minutes} minutes ({timeout_minutes * 60} seconds)")
+    
+    st.markdown("---")
+    
     st.header("📁 File Selection")
     
     # Option 1: Select predefined folders
@@ -455,11 +555,15 @@ if submit_button:
             status_text = st.empty()
         
         try:
-            # Call Open Interpreter
+            # Get timeout from session state or use default (5 minutes)
+            timeout_seconds = st.session_state.get('timeout_seconds', 300)
+            
+            # Call Open Interpreter with timeout
             main_answer, intermediate_steps, generated_files, answer_file_path = call_openai_code_interpreter(
                 prompt, 
                 all_selected_files, 
-                OUTPUT_FOLDER
+                OUTPUT_FOLDER,
+                timeout_seconds=timeout_seconds
             )
             
             # Clear loading indicators
@@ -494,17 +598,35 @@ if submit_button:
             # Mark that we should show summary tab if summary exists
             if answer_file_path and os.path.basename(answer_file_path).startswith('summary_'):
                 st.session_state.active_tab_index[len(st.session_state.messages) - 1] = 0  # Summary tab
+            
+            # Success message - the results will be displayed below automatically
+            if generated_files:
+                st.success(f"✅ Successfully generated {len(generated_files)} file(s)!")
+        except TimeoutError as e:
+            status_container.empty()
+            progress_bar.empty()
+            status_text.empty()
+            st.error(f"⏱️ Timeout Error: {str(e)}")
+            st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the timeout in the sidebar configuration.")
         except Exception as e:
             status_container.empty()
             progress_bar.empty()
             status_text.empty()
-            st.error(f"Error during processing: {str(e)}")
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                st.error(f"⏱️ Timeout Error: {error_msg}")
+                st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the timeout in the sidebar configuration.")
+            else:
+                st.error(f"Error during processing: {error_msg}")
+                st.exception(e)
 
 # Display conversation history
 if st.session_state.messages:
     st.header("📝 Generated Responses")
     
-    for i, msg in enumerate(reversed(st.session_state.messages[-5:])):  # Show last 5 responses
+    reversed_messages = list(reversed(st.session_state.messages[-5:]))  # Show last 5 responses
+    
+    for i, msg in enumerate(reversed_messages):
         # Get message data (handle both old and new format)
         prompt_text = msg.get('prompt', '')
         main_answer = msg.get('main_answer', msg.get('response', ''))
@@ -520,144 +642,298 @@ if st.session_state.messages:
         # Check if summary file exists and should be shown first
         has_summary = answer_file and os.path.basename(answer_file).startswith('summary_')
         
-        # Create tabs - put Summary first if available, otherwise Main Answer
-        if has_summary:
-            tab1, tab2, tab3 = st.tabs(["📋 Summary", "🔍 Intermediate Steps", "📊 Generated Files"])
-        else:
-            tab1, tab2, tab3 = st.tabs(["✨ Main Answer", "🔍 Intermediate Steps", "📊 Generated Files"])
-        
-        with tab1:
-            # Display main answer
-            st.markdown(main_answer)
-            
-            # Show answer file info and download
-            if answer_file and os.path.exists(answer_file):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.success(f"✅ Answer saved to: `{os.path.basename(answer_file)}`")
-                with col2:
-                    with open(answer_file, "rb") as f:
-                        st.download_button(
-                            label="📥 Download Answer",
-                            data=f.read(),
-                            file_name=os.path.basename(answer_file),
-                            mime="text/plain",
-                            key=f"download_answer_{i}"
-                        )
-        
-        with tab2:
-            # Display intermediate steps in scrolled window
-            if intermediate_steps and intermediate_steps != main_answer:
-                st.markdown("**Execution Details:**")
-                st.text_area(
-                    "Intermediate steps and execution logs",
-                    value=intermediate_steps,
-                    height=500,
-                    key=f"intermediate_{i}",
-                    label_visibility="collapsed",
-                    disabled=True  # Make it read-only and scrollable
-                )
-            else:
-                st.info("No intermediate steps available.")
-        
-        with tab3:
-            # Generated Files tab with file viewer
-            if all_output_files:
-                # Create file name tabs at the top
-                file_tabs = st.tabs([os.path.basename(f) for f in all_output_files])
+        # For the most recent answer (i == 0), show it normally
+        # For previous answers (i > 0), show them in collapsible expanders
+        if i > 0:
+            # Previous answers - show in collapsible expander
+            # Truncate prompt for display if too long
+            display_prompt = prompt_text[:60] + "..." if len(prompt_text) > 60 else prompt_text
+            with st.expander(f"📜 Previous Answer: {display_prompt}", expanded=False):
+                st.markdown(f"**Prompt:** {prompt_text}")
+                st.markdown("---")
                 
-                for tab_idx, file_path in enumerate(all_output_files):
-                    with file_tabs[tab_idx]:
-                        if os.path.exists(file_path):
-                            # Check if it's a text file (answer file)
-                            if file_path.endswith('.txt'):
-                                # Display text file content
-                                with open(file_path, "r", encoding="utf-8") as f:
-                                    file_content = f.read()
-                                
-                                st.markdown("**File Content:**")
-                                st.text_area(
-                                    "File content",
-                                    value=file_content,
-                                    height=400,
-                                    key=f"text_viewer_{file_path}_{i}",
-                                    label_visibility="collapsed"
+                # Create tabs - put Summary first if available, otherwise Main Answer
+                if has_summary:
+                    tab1, tab2, tab3 = st.tabs(["📋 Summary", "🔍 Intermediate Steps", "📊 Generated Files"])
+                else:
+                    tab1, tab2, tab3 = st.tabs(["✨ Main Answer", "🔍 Intermediate Steps", "📊 Generated Files"])
+                
+                with tab1:
+                    # Display main answer
+                    st.markdown(main_answer)
+                    
+                    # Show answer file info and download
+                    if answer_file and os.path.exists(answer_file):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.success(f"✅ Answer saved to: `{os.path.basename(answer_file)}`")
+                        with col2:
+                            with open(answer_file, "rb") as f:
+                                st.download_button(
+                                    label="📥 Download Answer",
+                                    data=f.read(),
+                                    file_name=os.path.basename(answer_file),
+                                    mime="text/plain",
+                                    key=f"download_answer_{i}"
                                 )
-                                
-                                # Download button for text file
-                                with open(file_path, "rb") as f:
-                                    st.download_button(
-                                        label="📥 Download Text File",
-                                        data=f.read(),
-                                        file_name=os.path.basename(file_path),
-                                        mime="text/plain",
-                                        key=f"download_text_{file_path}_{i}"
-                                    )
-                            
-                            # Check if it's a dataframe file
-                            elif file_path in st.session_state.processed_dataframes:
-                                df = st.session_state.processed_dataframes[file_path]
-                                
-                                # File info
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Rows", len(df))
-                                with col2:
-                                    st.metric("Columns", len(df.columns))
-                                with col3:
-                                    st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
-                                
-                                # DataFrame display
-                                st.dataframe(df, use_container_width=True)
-                                
-                                # Download button
-                                if file_path.endswith('.csv'):
-                                    csv = df.to_csv(index=False).encode('utf-8')
-                                    st.download_button(
-                                        label="📥 Download CSV",
-                                        data=csv,
-                                        file_name=os.path.basename(file_path),
-                                        mime="text/csv",
-                                        key=f"download_csv_{file_path}_{i}"
-                                    )
-                                else:
-                                    # For Excel, we'll use the existing file
-                                    with open(file_path, "rb") as f:
-                                        st.download_button(
-                                            label="📥 Download Excel",
-                                            data=f.read(),
-                                            file_name=os.path.basename(file_path),
-                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                            key=f"download_excel_{file_path}_{i}"
+                
+                with tab2:
+                    # Display intermediate steps in scrolled window
+                    if intermediate_steps and intermediate_steps != main_answer:
+                        st.markdown("**Execution Details:**")
+                        st.text_area(
+                            "Intermediate steps and execution logs",
+                            value=intermediate_steps,
+                            height=500,
+                            key=f"intermediate_{i}",
+                            label_visibility="collapsed",
+                            disabled=True  # Make it read-only and scrollable
+                        )
+                    else:
+                        st.info("No intermediate steps available.")
+                
+                with tab3:
+                    # Generated Files tab with file viewer
+                    if all_output_files:
+                        # Create file name tabs at the top
+                        file_tabs = st.tabs([os.path.basename(f) for f in all_output_files])
+                        
+                        for tab_idx, file_path in enumerate(all_output_files):
+                            with file_tabs[tab_idx]:
+                                if os.path.exists(file_path):
+                                    # Check if it's a text file (answer file)
+                                    if file_path.endswith('.txt'):
+                                        # Display text file content
+                                        with open(file_path, "r", encoding="utf-8") as f:
+                                            file_content = f.read()
+                                        
+                                        st.markdown("**File Content:**")
+                                        st.text_area(
+                                            "File content",
+                                            value=file_content,
+                                            height=400,
+                                            key=f"text_viewer_{file_path}_{i}",
+                                            label_visibility="collapsed"
                                         )
-                            else:
-                                # Try to read as dataframe if not in cache (skip text files)
-                                if not file_path.endswith('.txt'):
-                                    try:
-                                        df = read_excel_or_csv(file_path)
-                                        if not df.empty:
-                                            st.session_state.processed_dataframes[file_path] = df
-                                            st.rerun()
-                                        else:
-                                            st.warning("Could not read file as dataframe.")
-                                    except:
-                                        st.warning("File type not supported for preview. You can still download it.")
+                                        
+                                        # Download button for text file
                                         with open(file_path, "rb") as f:
                                             st.download_button(
-                                                label="📥 Download File",
+                                                label="📥 Download Text File",
                                                 data=f.read(),
                                                 file_name=os.path.basename(file_path),
-                                                mime="application/octet-stream",
-                                                key=f"download_file_{file_path}_{i}"
+                                                mime="text/plain",
+                                                key=f"download_text_{file_path}_{i}"
+                                            )
+                                    
+                                    # Check if it's a dataframe file
+                                    elif file_path in st.session_state.processed_dataframes:
+                                        df = st.session_state.processed_dataframes[file_path]
+                                        
+                                        # File info
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            st.metric("Rows", len(df))
+                                        with col2:
+                                            st.metric("Columns", len(df.columns))
+                                        with col3:
+                                            st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                        
+                                        # DataFrame display
+                                        st.dataframe(df, use_container_width=True)
+                                        
+                                        # Download button
+                                        if file_path.endswith('.csv'):
+                                            csv = df.to_csv(index=False).encode('utf-8')
+                                            st.download_button(
+                                                label="📥 Download CSV",
+                                                data=csv,
+                                                file_name=os.path.basename(file_path),
+                                                mime="text/csv",
+                                                key=f"download_csv_{file_path}_{i}"
+                                            )
+                                        else:
+                                            # For Excel, we'll use the existing file
+                                            with open(file_path, "rb") as f:
+                                                st.download_button(
+                                                    label="📥 Download Excel",
+                                                    data=f.read(),
+                                                    file_name=os.path.basename(file_path),
+                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                    key=f"download_excel_{file_path}_{i}"
+                                                )
+                                    else:
+                                        # Try to read as dataframe if not in cache (skip text files)
+                                        if not file_path.endswith('.txt'):
+                                            try:
+                                                df = read_excel_or_csv(file_path)
+                                                if not df.empty:
+                                                    st.session_state.processed_dataframes[file_path] = df
+                                                    st.rerun()
+                                                else:
+                                                    st.warning("Could not read file as dataframe.")
+                                            except:
+                                                st.warning("File type not supported for preview. You can still download it.")
+                                                with open(file_path, "rb") as f:
+                                                    st.download_button(
+                                                        label="📥 Download File",
+                                                        data=f.read(),
+                                                        file_name=os.path.basename(file_path),
+                                                        mime="application/octet-stream",
+                                                        key=f"download_file_{file_path}_{i}"
+                                                    )
+                                        else:
+                                            st.warning("Text files are displayed in the text viewer above.")
+                                else:
+                                    st.warning(f"File not found: {os.path.basename(file_path)}")
+                    else:
+                        st.info("No generated files available.")
+        else:
+            # Most recent answer - show normally (not collapsed)
+            st.subheader("✨ Current Answer")
+            st.markdown(f"**Prompt:** {prompt_text}")
+            st.markdown("---")
+            
+            # Create tabs - put Summary first if available, otherwise Main Answer
+            if has_summary:
+                tab1, tab2, tab3 = st.tabs(["📋 Summary", "🔍 Intermediate Steps", "📊 Generated Files"])
+            else:
+                tab1, tab2, tab3 = st.tabs(["✨ Main Answer", "🔍 Intermediate Steps", "📊 Generated Files"])
+            
+            with tab1:
+                # Display main answer
+                st.markdown(main_answer)
+                
+                # Show answer file info and download
+                if answer_file and os.path.exists(answer_file):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.success(f"✅ Answer saved to: `{os.path.basename(answer_file)}`")
+                    with col2:
+                        with open(answer_file, "rb") as f:
+                            st.download_button(
+                                label="📥 Download Answer",
+                                data=f.read(),
+                                file_name=os.path.basename(answer_file),
+                                mime="text/plain",
+                                key=f"download_answer_{i}"
+                            )
+            
+            with tab2:
+                # Display intermediate steps in scrolled window
+                if intermediate_steps and intermediate_steps != main_answer:
+                    st.markdown("**Execution Details:**")
+                    st.text_area(
+                        "Intermediate steps and execution logs",
+                        value=intermediate_steps,
+                        height=500,
+                        key=f"intermediate_{i}",
+                        label_visibility="collapsed",
+                        disabled=True  # Make it read-only and scrollable
+                    )
+                else:
+                    st.info("No intermediate steps available.")
+            
+            with tab3:
+                # Generated Files tab with file viewer
+                if all_output_files:
+                    # Create file name tabs at the top
+                    file_tabs = st.tabs([os.path.basename(f) for f in all_output_files])
+                    
+                    for tab_idx, file_path in enumerate(all_output_files):
+                        with file_tabs[tab_idx]:
+                            if os.path.exists(file_path):
+                                # Check if it's a text file (answer file)
+                                if file_path.endswith('.txt'):
+                                    # Display text file content
+                                    with open(file_path, "r", encoding="utf-8") as f:
+                                        file_content = f.read()
+                                    
+                                    st.markdown("**File Content:**")
+                                    st.text_area(
+                                        "File content",
+                                        value=file_content,
+                                        height=400,
+                                        key=f"text_viewer_{file_path}_{i}",
+                                        label_visibility="collapsed"
+                                    )
+                                    
+                                    # Download button for text file
+                                    with open(file_path, "rb") as f:
+                                        st.download_button(
+                                            label="📥 Download Text File",
+                                            data=f.read(),
+                                            file_name=os.path.basename(file_path),
+                                            mime="text/plain",
+                                            key=f"download_text_{file_path}_{i}"
+                                        )
+                                
+                                # Check if it's a dataframe file
+                                elif file_path in st.session_state.processed_dataframes:
+                                    df = st.session_state.processed_dataframes[file_path]
+                                    
+                                    # File info
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Rows", len(df))
+                                    with col2:
+                                        st.metric("Columns", len(df.columns))
+                                    with col3:
+                                        st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                    
+                                    # DataFrame display
+                                    st.dataframe(df, use_container_width=True)
+                                    
+                                    # Download button
+                                    if file_path.endswith('.csv'):
+                                        csv = df.to_csv(index=False).encode('utf-8')
+                                        st.download_button(
+                                            label="📥 Download CSV",
+                                            data=csv,
+                                            file_name=os.path.basename(file_path),
+                                            mime="text/csv",
+                                            key=f"download_csv_{file_path}_{i}"
+                                        )
+                                    else:
+                                        # For Excel, we'll use the existing file
+                                        with open(file_path, "rb") as f:
+                                            st.download_button(
+                                                label="📥 Download Excel",
+                                                data=f.read(),
+                                                file_name=os.path.basename(file_path),
+                                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                key=f"download_excel_{file_path}_{i}"
                                             )
                                 else:
-                                    st.warning("Text files are displayed in the text viewer above.")
-                        else:
-                            st.warning(f"File not found: {os.path.basename(file_path)}")
-            else:
-                st.info("No generated files available.")
+                                    # Try to read as dataframe if not in cache (skip text files)
+                                    if not file_path.endswith('.txt'):
+                                        try:
+                                            df = read_excel_or_csv(file_path)
+                                            if not df.empty:
+                                                st.session_state.processed_dataframes[file_path] = df
+                                                st.rerun()
+                                            else:
+                                                st.warning("Could not read file as dataframe.")
+                                        except:
+                                            st.warning("File type not supported for preview. You can still download it.")
+                                            with open(file_path, "rb") as f:
+                                                st.download_button(
+                                                    label="📥 Download File",
+                                                    data=f.read(),
+                                                    file_name=os.path.basename(file_path),
+                                                    mime="application/octet-stream",
+                                                    key=f"download_file_{file_path}_{i}"
+                                                )
+                                    else:
+                                        st.warning("Text files are displayed in the text viewer above.")
+                            else:
+                                st.warning(f"File not found: {os.path.basename(file_path)}")
+                else:
+                    st.info("No generated files available.")
         
-        st.markdown("---")
+        # Add separator only if not the last message
+        if i < len(reversed_messages) - 1:
+            st.markdown("---")
 
 # Footer
 st.markdown("---")

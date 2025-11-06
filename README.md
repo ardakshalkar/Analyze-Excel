@@ -72,6 +72,40 @@ Analyze&Excel/
 - You can create predefined input folders manually or let users upload files
 - Make sure you have a valid OpenAI API key with access to GPT-4 or GPT-3.5-turbo
 
+## Timeout Configuration
+
+The app includes a timeout mechanism to prevent requests from running indefinitely. By default, requests timeout after 5 minutes (300 seconds).
+
+### Adjusting Timeout
+
+1. **Via UI**: Use the "Timeout Settings" in the sidebar to adjust the timeout (1-60 minutes)
+2. **For Complex Operations**: Increase the timeout if you're working with large files or complex analysis
+
+### Troubleshooting Timeout Issues
+
+If you encounter timeout errors:
+
+1. **Increase Timeout**: Use the sidebar timeout settings to increase the limit
+2. **Simplify Requests**: Break complex requests into smaller, simpler tasks
+3. **Reduce File Size**: Work with smaller datasets or sample data first
+4. **Check File Complexity**: Very large or complex Excel files may require more time
+
+### Streamlit Server Timeout
+
+If you're running Streamlit in production, you may also need to configure the server timeout:
+
+```bash
+# Run with increased timeout (10 minutes)
+streamlit run app.py --server.runOnSave=false --server.headless=true
+```
+
+Or create a `.streamlit/config.toml` file:
+```toml
+[server]
+runOnSave = false
+headless = true
+```
+
 ## Example Prompts
 
 - "Create a summary report with total sales by month"
