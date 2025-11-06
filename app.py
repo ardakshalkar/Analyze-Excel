@@ -43,20 +43,29 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Load OpenAI API key
 def load_api_key():
-    """Load API key from environment, .env file, or session state"""
+    """Load API key from environment or .env file only"""
     from dotenv import load_dotenv
     load_dotenv()
     
-    # First check environment variable
+    # Only check environment variable
     env_key = os.getenv("OPENAI_API_KEY")
-    if env_key:
-        return env_key
+    return env_key
+
+# Load timeout from environment
+def load_timeout():
+    """Load timeout from environment variable or use default"""
+    from dotenv import load_dotenv
+    load_dotenv()
     
-    # Then check session state (from UI input)
-    if 'openai_api_key' in st.session_state and st.session_state.openai_api_key:
-        return st.session_state.openai_api_key
+    timeout_str = os.getenv("TIMEOUT_SECONDS")
+    if timeout_str:
+        try:
+            return int(timeout_str)
+        except ValueError:
+            pass
     
-    return None
+    # Default: 5 minutes (300 seconds)
+    return 300
 
 def get_available_folders():
     """Get list of available predefined folders"""
@@ -226,7 +235,7 @@ def call_openai_code_interpreter(prompt: str, file_paths: List[str], output_fold
     """
     api_key = load_api_key()
     if not api_key:
-        error_msg = "Error: OpenAI API key not found. Please enter your API key in the sidebar (Configuration section) or set OPENAI_API_KEY in your environment/.env file."
+        error_msg = "Error: OpenAI API key not found. Please set OPENAI_API_KEY in your environment/.env file."
         return error_msg, "", [], None
     
     # Get existing files before execution
@@ -335,7 +344,7 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
                        "Possible solutions:\n" + \
                        "1. Simplify your request or break it into smaller tasks\n" + \
                        "2. Reduce the size of input files\n" + \
-                       "3. Increase the timeout limit in the configuration\n" + \
+                       "3. Increase the TIMEOUT_SECONDS in your environment/.env file\n" + \
                        "4. Check if the files are too large or complex"
             return error_msg, error_msg, [], None
         except Exception as e:
@@ -433,43 +442,15 @@ st.markdown("Upload or select files and analyze them with Open Interpreter")
 
 # Sidebar for file selection
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    # Check if OpenAI is accessible (API key available)
+    api_key = load_api_key()
     
-    # API Key input
-    api_key_from_env = os.getenv("OPENAI_API_KEY")
-    if not api_key_from_env:
-        st.subheader("🔑 OpenAI API Key")
-        api_key_input = st.text_input(
-            "Enter your OpenAI API Key",
-            type="password",
-            value=st.session_state.get('openai_api_key', ''),
-            help="You can also set OPENAI_API_KEY in a .env file or environment variable",
-            key="api_key_input"
-        )
-        if api_key_input:
-            st.session_state.openai_api_key = api_key_input
-            st.success("✅ API Key saved (session only)")
-        else:
-            st.warning("⚠️ API Key required to use the app")
-    else:
-        st.success("✅ API Key loaded from environment")
-    
-    st.markdown("---")
-    
-    # Timeout configuration
-    st.subheader("⏱️ Timeout Settings")
-    timeout_minutes = st.number_input(
-        "Request Timeout (minutes)",
-        min_value=1,
-        max_value=60,
-        value=st.session_state.get('timeout_seconds', 300) // 60,
-        help="Maximum time to wait for Excel generation (default: 5 minutes). Increase for complex operations or large files.",
-        key="timeout_input"
-    )
-    st.session_state.timeout_seconds = timeout_minutes * 60
-    st.caption(f"Current timeout: {timeout_minutes} minutes ({timeout_minutes * 60} seconds)")
-    
-    st.markdown("---")
+    # Show configuration only if OpenAI is not accessible
+    if not api_key:
+        st.header("⚙️ Configuration")
+        st.warning("⚠️ OpenAI API key not found")
+        st.info("Please set OPENAI_API_KEY in your environment variables or .env file.")
+        st.markdown("---")
     
     st.header("📁 File Selection")
     
@@ -555,8 +536,8 @@ if submit_button:
             status_text = st.empty()
         
         try:
-            # Get timeout from session state or use default (5 minutes)
-            timeout_seconds = st.session_state.get('timeout_seconds', 300)
+            # Get timeout from environment or use default (5 minutes)
+            timeout_seconds = load_timeout()
             
             # Call Open Interpreter with timeout
             main_answer, intermediate_steps, generated_files, answer_file_path = call_openai_code_interpreter(
@@ -607,7 +588,7 @@ if submit_button:
             progress_bar.empty()
             status_text.empty()
             st.error(f"⏱️ Timeout Error: {str(e)}")
-            st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the timeout in the sidebar configuration.")
+            st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the TIMEOUT_SECONDS in your environment/.env file.")
         except Exception as e:
             status_container.empty()
             progress_bar.empty()
@@ -615,7 +596,7 @@ if submit_button:
             error_msg = str(e)
             if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                 st.error(f"⏱️ Timeout Error: {error_msg}")
-                st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the timeout in the sidebar configuration.")
+                st.warning("💡 Tip: Try simplifying your request, reducing file sizes, or increasing the TIMEOUT_SECONDS in your environment/.env file.")
             else:
                 st.error(f"Error during processing: {error_msg}")
                 st.exception(e)
