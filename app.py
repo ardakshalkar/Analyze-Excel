@@ -29,6 +29,8 @@ if 'output_files' not in st.session_state:
     st.session_state.output_files = []
 if 'processed_dataframes' not in st.session_state:
     st.session_state.processed_dataframes = {}
+if 'selected_sheets' not in st.session_state:
+    st.session_state.selected_sheets = {}  # {file_path: sheet_name}
 if 'active_tab_index' not in st.session_state:
     st.session_state.active_tab_index = {}
 
@@ -91,8 +93,12 @@ def process_uploaded_file(uploaded_file) -> str:
         f.write(uploaded_file.getbuffer())
     return file_path
 
-def read_excel_or_csv(file_path: str) -> pd.DataFrame:
-    """Read Excel or CSV file into DataFrame"""
+def read_excel_or_csv(file_path: str):
+    """Read Excel or CSV file into DataFrame or dict of DataFrames (for multi-sheet Excel files)
+    Returns:
+        - For CSV: pd.DataFrame
+        - For Excel: dict[str, pd.DataFrame] where keys are sheet names
+    """
     # Skip text files
     if file_path.endswith('.txt'):
         return pd.DataFrame()
@@ -101,10 +107,15 @@ def read_excel_or_csv(file_path: str) -> pd.DataFrame:
         if file_path.endswith('.csv'):
             return pd.read_csv(file_path)
         else:
-            return pd.read_excel(file_path)
+            # Read all sheets from Excel file
+            excel_file = pd.ExcelFile(file_path)
+            sheets_dict = {}
+            for sheet_name in excel_file.sheet_names:
+                sheets_dict[sheet_name] = pd.read_excel(excel_file, sheet_name=sheet_name)
+            return sheets_dict
     except Exception as e:
         st.error(f"Error reading {file_path}: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame() if file_path.endswith('.csv') else {}
 
 def get_file_context(file_paths: List[str]) -> str:
     """Create context string from file paths for the prompt"""
@@ -116,15 +127,58 @@ def get_file_context(file_paths: List[str]) -> str:
                 context += f"\n- {os.path.basename(file_path)}: Text file\n"
                 continue
             
-            df = read_excel_or_csv(file_path)
-            if not df.empty:
-                context += f"\n- {os.path.basename(file_path)}: {len(df)} rows, {len(df.columns)} columns\n"
-                context += f"  Columns: {', '.join(df.columns.tolist())}\n"
+            data = read_excel_or_csv(file_path)
+            if isinstance(data, dict):
+                # Excel file with multiple sheets
+                context += f"\n- {os.path.basename(file_path)}: Excel file with {len(data)} sheet(s)\n"
+                for sheet_name, df in data.items():
+                    if not df.empty:
+                        context += f"  Sheet '{sheet_name}': {len(df)} rows, {len(df.columns)} columns\n"
+                        context += f"    Columns: {', '.join(df.columns.tolist())}\n"
+            elif isinstance(data, pd.DataFrame):
+                # CSV or single sheet
+                if not data.empty:
+                    context += f"\n- {os.path.basename(file_path)}: {len(data)} rows, {len(data.columns)} columns\n"
+                    context += f"  Columns: {', '.join(data.columns.tolist())}\n"
+                else:
+                    context += f"\n- {os.path.basename(file_path)}: Empty or unsupported file\n"
             else:
                 context += f"\n- {os.path.basename(file_path)}: Empty or unsupported file\n"
         except Exception as e:
             context += f"\n- {os.path.basename(file_path)}: Error reading file - {str(e)}\n"
     return context
+
+def get_current_dataframe(file_path: str):
+    """Get the current dataframe for a file, handling multi-sheet Excel files"""
+    if file_path not in st.session_state.processed_dataframes:
+        return None
+    
+    data = st.session_state.processed_dataframes[file_path]
+    
+    if isinstance(data, dict):
+        # Multi-sheet Excel file - get selected sheet
+        selected_sheet = st.session_state.selected_sheets.get(file_path)
+        if selected_sheet and selected_sheet in data:
+            return data[selected_sheet]
+        elif data:
+            # Fallback to first sheet
+            return list(data.values())[0]
+        return None
+    elif isinstance(data, pd.DataFrame):
+        # Single dataframe (CSV or single sheet)
+        return data
+    
+    return None
+
+def get_sheet_names(file_path: str) -> list:
+    """Get list of sheet names for a file (empty list for CSV or single sheet)"""
+    if file_path not in st.session_state.processed_dataframes:
+        return []
+    
+    data = st.session_state.processed_dataframes[file_path]
+    if isinstance(data, dict):
+        return list(data.keys())
+    return []
 
 def get_existing_output_files(output_folder: str) -> set:
     """Get set of existing output files before execution"""
@@ -519,6 +573,7 @@ if clear_button:
     st.session_state.messages = []
     st.session_state.output_files = []
     st.session_state.processed_dataframes = {}
+    st.session_state.selected_sheets = {}
     st.rerun()
 
 # Process submission
@@ -572,9 +627,16 @@ if submit_button:
                 if file_path not in st.session_state.processed_dataframes:
                     # Only load Excel/CSV files, not text files
                     if not file_path.endswith('.txt'):
-                        df = read_excel_or_csv(file_path)
-                        if not df.empty:
-                            st.session_state.processed_dataframes[file_path] = df
+                        data = read_excel_or_csv(file_path)
+                        if isinstance(data, dict):
+                            # Excel file with multiple sheets
+                            st.session_state.processed_dataframes[file_path] = data
+                            # Set default selected sheet to first sheet
+                            if file_path not in st.session_state.selected_sheets:
+                                st.session_state.selected_sheets[file_path] = list(data.keys())[0] if data else None
+                        elif isinstance(data, pd.DataFrame) and not data.empty:
+                            # CSV or single sheet Excel
+                            st.session_state.processed_dataframes[file_path] = data
             
             # Mark that we should show summary tab if summary exists
             if answer_file_path and os.path.basename(answer_file_path).startswith('summary_'):
@@ -709,47 +771,84 @@ if st.session_state.messages:
                                     
                                     # Check if it's a dataframe file
                                     elif file_path in st.session_state.processed_dataframes:
-                                        df = st.session_state.processed_dataframes[file_path]
+                                        # Get sheet names for this file
+                                        sheet_names = get_sheet_names(file_path)
                                         
-                                        # File info
-                                        col1, col2, col3 = st.columns(3)
-                                        with col1:
-                                            st.metric("Rows", len(df))
-                                        with col2:
-                                            st.metric("Columns", len(df.columns))
-                                        with col3:
-                                            st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                        # Show sheet selection buttons if multiple sheets
+                                        if sheet_names and len(sheet_names) > 1:
+                                            st.markdown("**Select Sheet:**")
+                                            # Create buttons for each sheet
+                                            cols = st.columns(min(len(sheet_names), 5))  # Max 5 columns
+                                            for idx, sheet_name in enumerate(sheet_names):
+                                                with cols[idx % len(cols)]:
+                                                    button_key = f"sheet_btn_{file_path}_{sheet_name}_{i}"
+                                                    is_selected = st.session_state.selected_sheets.get(file_path) == sheet_name
+                                                    if st.button(
+                                                        sheet_name,
+                                                        key=button_key,
+                                                        type="primary" if is_selected else "secondary",
+                                                        use_container_width=True
+                                                    ):
+                                                        st.session_state.selected_sheets[file_path] = sheet_name
+                                                        st.rerun()
                                         
-                                        # DataFrame display
-                                        st.dataframe(df, use_container_width=True)
+                                        # Get current dataframe (handles multi-sheet)
+                                        df = get_current_dataframe(file_path)
                                         
-                                        # Download button
-                                        if file_path.endswith('.csv'):
-                                            csv = df.to_csv(index=False).encode('utf-8')
-                                            st.download_button(
-                                                label="📥 Download CSV",
-                                                data=csv,
-                                                file_name=os.path.basename(file_path),
-                                                mime="text/csv",
-                                                key=f"download_csv_{file_path}_{i}"
-                                            )
-                                        else:
-                                            # For Excel, we'll use the existing file
-                                            with open(file_path, "rb") as f:
+                                        if df is not None and not df.empty:
+                                            # Show current sheet name if multi-sheet
+                                            if sheet_names and len(sheet_names) > 1:
+                                                current_sheet = st.session_state.selected_sheets.get(file_path, sheet_names[0])
+                                                st.markdown(f"**Current Sheet: {current_sheet}**")
+                                            
+                                            # File info
+                                            col1, col2, col3 = st.columns(3)
+                                            with col1:
+                                                st.metric("Rows", len(df))
+                                            with col2:
+                                                st.metric("Columns", len(df.columns))
+                                            with col3:
+                                                st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                            
+                                            # DataFrame display
+                                            st.dataframe(df, use_container_width=True)
+                                            
+                                            # Download button
+                                            if file_path.endswith('.csv'):
+                                                csv = df.to_csv(index=False).encode('utf-8')
                                                 st.download_button(
-                                                    label="📥 Download Excel",
-                                                    data=f.read(),
+                                                    label="📥 Download CSV",
+                                                    data=csv,
                                                     file_name=os.path.basename(file_path),
-                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                                    key=f"download_excel_{file_path}_{i}"
+                                                    mime="text/csv",
+                                                    key=f"download_csv_{file_path}_{i}"
                                                 )
+                                            else:
+                                                # For Excel, we'll use the existing file
+                                                with open(file_path, "rb") as f:
+                                                    st.download_button(
+                                                        label="📥 Download Excel",
+                                                        data=f.read(),
+                                                        file_name=os.path.basename(file_path),
+                                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                        key=f"download_excel_{file_path}_{i}"
+                                                    )
+                                        else:
+                                            st.warning("No data available to display.")
                                     else:
                                         # Try to read as dataframe if not in cache (skip text files)
                                         if not file_path.endswith('.txt'):
                                             try:
-                                                df = read_excel_or_csv(file_path)
-                                                if not df.empty:
-                                                    st.session_state.processed_dataframes[file_path] = df
+                                                data = read_excel_or_csv(file_path)
+                                                if isinstance(data, dict):
+                                                    # Excel file with multiple sheets
+                                                    st.session_state.processed_dataframes[file_path] = data
+                                                    # Set default selected sheet to first sheet
+                                                    if file_path not in st.session_state.selected_sheets:
+                                                        st.session_state.selected_sheets[file_path] = list(data.keys())[0] if data else None
+                                                    st.rerun()
+                                                elif isinstance(data, pd.DataFrame) and not data.empty:
+                                                    st.session_state.processed_dataframes[file_path] = data
                                                     st.rerun()
                                                 else:
                                                     st.warning("Could not read file as dataframe.")
@@ -851,47 +950,84 @@ if st.session_state.messages:
                                 
                                 # Check if it's a dataframe file
                                 elif file_path in st.session_state.processed_dataframes:
-                                    df = st.session_state.processed_dataframes[file_path]
+                                    # Get sheet names for this file
+                                    sheet_names = get_sheet_names(file_path)
                                     
-                                    # File info
-                                    col1, col2, col3 = st.columns(3)
-                                    with col1:
-                                        st.metric("Rows", len(df))
-                                    with col2:
-                                        st.metric("Columns", len(df.columns))
-                                    with col3:
-                                        st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                    # Show sheet selection buttons if multiple sheets
+                                    if sheet_names and len(sheet_names) > 1:
+                                        st.markdown("**Select Sheet:**")
+                                        # Create buttons for each sheet
+                                        cols = st.columns(min(len(sheet_names), 5))  # Max 5 columns
+                                        for idx, sheet_name in enumerate(sheet_names):
+                                            with cols[idx % len(cols)]:
+                                                button_key = f"sheet_btn_{file_path}_{sheet_name}_{i}"
+                                                is_selected = st.session_state.selected_sheets.get(file_path) == sheet_name
+                                                if st.button(
+                                                    sheet_name,
+                                                    key=button_key,
+                                                    type="primary" if is_selected else "secondary",
+                                                    use_container_width=True
+                                                ):
+                                                    st.session_state.selected_sheets[file_path] = sheet_name
+                                                    st.rerun()
                                     
-                                    # DataFrame display
-                                    st.dataframe(df, use_container_width=True)
+                                    # Get current dataframe (handles multi-sheet)
+                                    df = get_current_dataframe(file_path)
                                     
-                                    # Download button
-                                    if file_path.endswith('.csv'):
-                                        csv = df.to_csv(index=False).encode('utf-8')
-                                        st.download_button(
-                                            label="📥 Download CSV",
-                                            data=csv,
-                                            file_name=os.path.basename(file_path),
-                                            mime="text/csv",
-                                            key=f"download_csv_{file_path}_{i}"
-                                        )
-                                    else:
-                                        # For Excel, we'll use the existing file
-                                        with open(file_path, "rb") as f:
+                                    if df is not None and not df.empty:
+                                        # Show current sheet name if multi-sheet
+                                        if sheet_names and len(sheet_names) > 1:
+                                            current_sheet = st.session_state.selected_sheets.get(file_path, sheet_names[0])
+                                            st.markdown(f"**Current Sheet: {current_sheet}**")
+                                        
+                                        # File info
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            st.metric("Rows", len(df))
+                                        with col2:
+                                            st.metric("Columns", len(df.columns))
+                                        with col3:
+                                            st.metric("File Size", f"{os.path.getsize(file_path) / 1024:.2f} KB")
+                                        
+                                        # DataFrame display
+                                        st.dataframe(df, use_container_width=True)
+                                        
+                                        # Download button
+                                        if file_path.endswith('.csv'):
+                                            csv = df.to_csv(index=False).encode('utf-8')
                                             st.download_button(
-                                                label="📥 Download Excel",
-                                                data=f.read(),
+                                                label="📥 Download CSV",
+                                                data=csv,
                                                 file_name=os.path.basename(file_path),
-                                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                                key=f"download_excel_{file_path}_{i}"
+                                                mime="text/csv",
+                                                key=f"download_csv_{file_path}_{i}"
                                             )
+                                        else:
+                                            # For Excel, we'll use the existing file
+                                            with open(file_path, "rb") as f:
+                                                st.download_button(
+                                                    label="📥 Download Excel",
+                                                    data=f.read(),
+                                                    file_name=os.path.basename(file_path),
+                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                    key=f"download_excel_{file_path}_{i}"
+                                                )
+                                    else:
+                                        st.warning("No data available to display.")
                                 else:
                                     # Try to read as dataframe if not in cache (skip text files)
                                     if not file_path.endswith('.txt'):
                                         try:
-                                            df = read_excel_or_csv(file_path)
-                                            if not df.empty:
-                                                st.session_state.processed_dataframes[file_path] = df
+                                            data = read_excel_or_csv(file_path)
+                                            if isinstance(data, dict):
+                                                # Excel file with multiple sheets
+                                                st.session_state.processed_dataframes[file_path] = data
+                                                # Set default selected sheet to first sheet
+                                                if file_path not in st.session_state.selected_sheets:
+                                                    st.session_state.selected_sheets[file_path] = list(data.keys())[0] if data else None
+                                                st.rerun()
+                                            elif isinstance(data, pd.DataFrame) and not data.empty:
+                                                st.session_state.processed_dataframes[file_path] = data
                                                 st.rerun()
                                             else:
                                                 st.warning("Could not read file as dataframe.")
