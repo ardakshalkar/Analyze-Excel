@@ -39,6 +39,7 @@ However, `open-interpreter` should work for most use cases since it primarily us
 1. **Push your code to GitHub:**
    - Make sure your repository is public (or you have Streamlit Cloud Pro)
    - Include `requirements.txt` in the repository
+   - Include `runtime.txt` to pin Python version (recommended: Python 3.12 for better compatibility)
 
 2. **Deploy on Streamlit Cloud:**
    - Go to [share.streamlit.io](https://share.streamlit.io)
@@ -46,6 +47,7 @@ However, `open-interpreter` should work for most use cases since it primarily us
    - Click "New app"
    - Select your repository and branch
    - Set main file path: `app.py`
+   - **IMPORTANT:** Before deploying, go to "Advanced settings" or "Settings" and set Python version to **3.12** (or 3.11) to avoid `tiktoken` build errors
 
 3. **Set Secrets (API Key):**
    - In Streamlit Cloud, go to your app settings
@@ -76,9 +78,17 @@ If you encounter issues:
 
 If you see an error about `tiktoken` requiring a Rust compiler:
 
-- **Solution:** The `requirements.txt` file now explicitly includes `tiktoken>=0.5.0` which should use prebuilt wheels
-- If the issue persists, Streamlit Cloud may need to update its pip version. The error message suggests running `pip install --upgrade pip`, but on Streamlit Cloud this should happen automatically
-- As a workaround, you can try pinning to a specific Python version (3.11 or 3.12) in your Streamlit Cloud settings, as these versions have better wheel support for `tiktoken`
+- **Root Cause:** Python 3.13 doesn't have prebuilt wheels for `tiktoken` yet, so it tries to build from source (requiring Rust)
+- **Primary Solution:** Set Python version to 3.12 (or 3.11) in Streamlit Cloud app settings:
+  1. Go to your app in Streamlit Cloud
+  2. Click "Settings" or "⚙️" icon
+  3. Look for "Python version" or "Advanced settings"
+  4. Select **Python 3.12** (or 3.11 as fallback)
+  5. Save and redeploy
+- **Additional Fixes Applied:**
+  - `runtime.txt` file created to pin Python to 3.12.7 (may not be automatically recognized by Streamlit Cloud)
+  - `tiktoken` pinned to version 0.8.0 in `requirements.txt` (known to have prebuilt wheels)
+- **Why this works:** Python 3.12 and 3.11 have prebuilt wheels for `tiktoken`, avoiding the need for Rust compilation
 
 ### Alternative Hosting Options:
 
