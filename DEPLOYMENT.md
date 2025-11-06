@@ -25,6 +25,15 @@ That's it! The interpreter is included in the package installation.
 
 ## Streamlit Cloud Deployment
 
+### ⚠️ IMPORTANT: Python Version Requirement
+
+**Before deploying, you MUST set Python version to 3.12 (or 3.11) in Streamlit Cloud settings!**
+
+- Streamlit Cloud defaults to Python 3.13, which is **NOT compatible** with `tiktoken` (required by `open-interpreter`)
+- Python 3.13 support for `tiktoken` is not available yet (PyO3 doesn't support Python 3.13)
+- **Solution:** Go to your app Settings → Change Python version to **3.12** → Save and redeploy
+- See detailed instructions in the "Troubleshooting" section below
+
 ### Important Considerations:
 
 ⚠️ **Streamlit Community Cloud has limitations:**
@@ -76,19 +85,52 @@ If you encounter issues:
 
 #### Common Error: "Failed building wheel for tiktoken"
 
-If you see an error about `tiktoken` requiring a Rust compiler:
+**⚠️ CRITICAL: This error occurs because Streamlit Cloud is using Python 3.13, which is NOT supported by `tiktoken`.**
 
-- **Root Cause:** Python 3.13 doesn't have prebuilt wheels for `tiktoken` yet, so it tries to build from source (requiring Rust)
-- **Primary Solution:** Set Python version to 3.12 (or 3.11) in Streamlit Cloud app settings:
-  1. Go to your app in Streamlit Cloud
-  2. Click "Settings" or "⚙️" icon
-  3. Look for "Python version" or "Advanced settings"
-  4. Select **Python 3.12** (or 3.11 as fallback)
-  5. Save and redeploy
-- **Additional Fixes Applied:**
-  - `runtime.txt` file created to pin Python to 3.12.7 (may not be automatically recognized by Streamlit Cloud)
-  - `tiktoken` constrained to `>=0.7.0,<0.8.0` in `requirements.txt` to satisfy `open-interpreter`'s dependency requirements while ensuring compatibility
-- **Why this works:** Python 3.12 and 3.11 have prebuilt wheels for `tiktoken`, avoiding the need for Rust compilation
+**Root Cause:**
+- Python 3.13 was released recently (October 2024)
+- `tiktoken` uses PyO3 (Rust-Python bridge) which doesn't support Python 3.13 yet
+- Without prebuilt wheels, pip tries to build from source, requiring Rust compiler
+- Streamlit Cloud doesn't provide Rust compiler, so the build fails
+
+**✅ SOLUTION: You MUST manually set Python version to 3.12 in Streamlit Cloud**
+
+**Step-by-Step Instructions:**
+
+1. **Go to Streamlit Cloud Dashboard:**
+   - Visit [share.streamlit.io](https://share.streamlit.io)
+   - Sign in and go to your app
+
+2. **Access App Settings:**
+   - Click on your app name
+   - Click the **"⚙️ Settings"** button (top right, next to "Manage app")
+   - OR click the **"⋮" (three dots)** menu → **"Settings"**
+
+3. **Change Python Version:**
+   - Scroll down to **"Python version"** section
+   - You'll see a dropdown showing the current version (likely 3.13)
+   - **Change it to Python 3.12** (or 3.11 as fallback)
+   - Click **"Save"**
+
+4. **Redeploy:**
+   - After saving, the app will automatically redeploy
+   - OR click **"Reboot app"** or **"Redeploy"** button
+   - Wait for the build to complete
+
+5. **Verify:**
+   - Check the deployment logs
+   - You should see Python 3.12 in the build output
+   - The `tiktoken` installation should succeed
+
+**Why This Works:**
+- Python 3.12 has prebuilt wheels for `tiktoken` 0.7.x
+- No Rust compiler needed
+- Compatible with `open-interpreter` requirements
+
+**Additional Notes:**
+- `runtime.txt` file exists but Streamlit Cloud may not automatically use it
+- Manual setting in UI is the most reliable method
+- `tiktoken>=0.7.0,<0.8.0` in requirements.txt ensures compatibility with `open-interpreter`
 
 ### Alternative Hosting Options:
 
