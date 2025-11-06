@@ -72,6 +72,14 @@ If you encounter issues:
 3. **Test locally first:** Ensure everything works locally before deploying
 4. **Check timeout:** Increase `TIMEOUT_SECONDS` if operations are timing out
 
+#### Common Error: "Failed building wheel for tiktoken"
+
+If you see an error about `tiktoken` requiring a Rust compiler:
+
+- **Solution:** The `requirements.txt` file now explicitly includes `tiktoken>=0.5.0` which should use prebuilt wheels
+- If the issue persists, Streamlit Cloud may need to update its pip version. The error message suggests running `pip install --upgrade pip`, but on Streamlit Cloud this should happen automatically
+- As a workaround, you can try pinning to a specific Python version (3.11 or 3.12) in your Streamlit Cloud settings, as these versions have better wheel support for `tiktoken`
+
 ### Alternative Hosting Options:
 
 If Streamlit Cloud doesn't work well, consider:
