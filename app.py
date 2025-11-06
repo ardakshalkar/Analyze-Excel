@@ -1053,6 +1053,4 @@ if st.session_state.messages:
             st.markdown("---")
 
 # Footer
-st.markdown("---")
-st.markdown("**Note:** Make sure to set your OPENAI_API_KEY in a `.env` file or environment variables.")
 
