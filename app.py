@@ -14,6 +14,31 @@ import time
 import hashlib
 import threading
 from functools import wraps
+import plotly.express as px
+import plotly.graph_objects as go
+
+# Check Streamlit version for st.dialog support
+try:
+    streamlit_version = st.__version__
+    version_parts = [int(x) for x in streamlit_version.split('.')]
+    if version_parts[0] < 1 or (version_parts[0] == 1 and version_parts[1] < 29):
+        st.error(f"⚠️ **Streamlit version {streamlit_version} is too old!**")
+        st.error("`st.dialog` requires Streamlit >= 1.29.0")
+        st.info("**To upgrade, run:** `pip install --upgrade streamlit>=1.29.0`")
+        st.stop()
+    
+    # Verify st.dialog exists
+    if not hasattr(st, 'dialog'):
+        st.error("⚠️ **`st.dialog` is not available in this Streamlit installation.**")
+        st.info("**To upgrade, run:** `pip install --upgrade streamlit>=1.29.0`")
+        st.info("**Then restart your Streamlit app.**")
+        st.stop()
+except Exception as e:
+    st.warning(f"Could not verify Streamlit version: {e}")
+    if not hasattr(st, 'dialog'):
+        st.error("⚠️ **`st.dialog` is not available.**")
+        st.info("**To upgrade, run:** `pip install --upgrade streamlit>=1.29.0`")
+        st.stop()
 
 # Page configuration
 st.set_page_config(
@@ -179,6 +204,170 @@ def get_sheet_names(file_path: str) -> list:
     if isinstance(data, dict):
         return list(data.keys())
     return []
+
+def show_file_preview_modal(file_path: str):
+    """Show file preview in a modal with data, statistics, and visualizations"""
+    # Check if file exists
+    if not os.path.exists(file_path):
+        st.error(f"File not found: {os.path.basename(file_path)}")
+        return
+    
+    # Skip text files
+    if file_path.endswith('.txt'):
+        st.info("Text files cannot be previewed in this view. Please download the file to view its contents.")
+        return
+    
+    # Load the file if not already loaded
+    try:
+        if file_path not in st.session_state.processed_dataframes:
+            data = read_excel_or_csv(file_path)
+            if isinstance(data, dict):
+                st.session_state.processed_dataframes[file_path] = data
+                if file_path not in st.session_state.selected_sheets:
+                    st.session_state.selected_sheets[file_path] = list(data.keys())[0] if data else None
+            elif isinstance(data, pd.DataFrame) and not data.empty:
+                st.session_state.processed_dataframes[file_path] = data
+        
+        # Get the dataframe
+        df = get_current_dataframe(file_path)
+        
+        if df is None or df.empty:
+            st.error("Could not load file or file is empty.")
+            return
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+        return
+    
+    # File info
+    st.markdown(f"### 📄 {os.path.basename(file_path)}")
+    
+    # Basic info
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Rows", len(df))
+    with col2:
+        st.metric("Total Columns", len(df.columns))
+    with col3:
+        file_size = os.path.getsize(file_path) / 1024
+        st.metric("File Size", f"{file_size:.2f} KB")
+    with col4:
+        st.metric("Preview Rows", min(100, len(df)))
+    
+    # Sheet selection for multi-sheet Excel files
+    sheet_names = get_sheet_names(file_path)
+    if sheet_names and len(sheet_names) > 1:
+        current_sheet = st.session_state.selected_sheets.get(file_path, sheet_names[0])
+        if current_sheet not in sheet_names:
+            current_sheet = sheet_names[0]
+        selected_sheet = st.selectbox(
+            "Select Sheet:",
+            sheet_names,
+            index=sheet_names.index(current_sheet),
+            key=f"preview_sheet_{file_path}"
+        )
+        st.session_state.selected_sheets[file_path] = selected_sheet
+        df = get_current_dataframe(file_path)
+    
+    st.markdown("---")
+    
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Preview (First 100)", "📈 Statistics", "📉 Visualizations", "ℹ️ Data Info"])
+    
+    with tab1:
+        st.markdown("**First 100 rows:**")
+        preview_df = df.head(100)
+        st.dataframe(preview_df, use_container_width=True, height=400)
+        if len(df) > 100:
+            st.info(f"Showing first 100 of {len(df)} total rows.")
+    
+    with tab2:
+        st.markdown("**Statistical Summary:**")
+        if len(df.select_dtypes(include=['number']).columns) > 0:
+            st.dataframe(df.describe(), use_container_width=True)
+        else:
+            st.info("No numeric columns found for statistical summary.")
+        
+        st.markdown("**Missing Values:**")
+        missing_data = df.isnull().sum()
+        missing_df = pd.DataFrame({
+            'Column': missing_data.index,
+            'Missing Count': missing_data.values,
+            'Missing %': (missing_data.values / len(df) * 100).round(2)
+        })
+        missing_df = missing_df[missing_df['Missing Count'] > 0]
+        if len(missing_df) > 0:
+            st.dataframe(missing_df, use_container_width=True)
+        else:
+            st.success("✅ No missing values found!")
+    
+    with tab3:
+        st.markdown("**Data Visualizations:**")
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        
+        if len(numeric_cols) == 0:
+            st.info("No numeric columns found for visualization.")
+        else:
+            # Distribution plots for numeric columns
+            if len(numeric_cols) > 0:
+                selected_col = st.selectbox("Select column for distribution:", numeric_cols, key=f"dist_col_{file_path}")
+                if selected_col:
+                    try:
+                        fig = px.histogram(df, x=selected_col, title=f"Distribution of {selected_col}")
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"Could not create histogram: {str(e)}")
+            
+            # Correlation heatmap if multiple numeric columns
+            if len(numeric_cols) > 1:
+                st.markdown("**Correlation Matrix:**")
+                try:
+                    corr_matrix = df[numeric_cols].corr()
+                    fig = px.imshow(
+                        corr_matrix,
+                        labels=dict(x="Columns", y="Columns", color="Correlation"),
+                        x=corr_matrix.columns,
+                        y=corr_matrix.columns,
+                        color_continuous_scale="RdBu",
+                        aspect="auto"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not create correlation matrix: {str(e)}")
+            
+            # Box plots for numeric columns
+            if len(numeric_cols) > 0:
+                st.markdown("**Box Plots:**")
+                selected_cols = st.multiselect(
+                    "Select columns for box plot:",
+                    numeric_cols,
+                    default=numeric_cols[:min(5, len(numeric_cols))],
+                    key=f"box_cols_{file_path}"
+                )
+                if selected_cols:
+                    try:
+                        # Create box plots
+                        fig = go.Figure()
+                        for col in selected_cols:
+                            fig.add_trace(go.Box(y=df[col], name=col))
+                        fig.update_layout(title="Box Plots", yaxis_title="Value")
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"Could not create box plots: {str(e)}")
+    
+    with tab4:
+        st.markdown("**Data Types:**")
+        dtype_df = pd.DataFrame({
+            'Column': df.columns,
+            'Data Type': [str(dtype) for dtype in df.dtypes],
+            'Non-Null Count': df.count().values,
+            'Null Count': df.isnull().sum().values
+        })
+        st.dataframe(dtype_df, use_container_width=True)
+        
+        st.markdown("**Memory Usage:**")
+        memory_usage = df.memory_usage(deep=True)
+        total_memory = memory_usage.sum() / 1024  # KB
+        st.info(f"Total memory usage: {total_memory:.2f} KB")
 
 def get_existing_output_files(output_folder: str) -> set:
     """Get set of existing output files before execution"""
@@ -533,12 +722,21 @@ with st.sidebar:
     st.subheader("Selected Files")
     all_selected_files = []
     
+    # Initialize modal state for file previews
+    if 'view_file_modal' not in st.session_state:
+        st.session_state.view_file_modal = None
+    
     # Add files from folders
     for folder in selected_folders:
         folder_files = load_files_from_folder(folder)
         all_selected_files.extend(folder_files)
         for file_path in folder_files:
-            st.text(f"📄 {os.path.basename(file_path)}")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(f"📄 {os.path.basename(file_path)}")
+            with col2:
+                if st.button("👁️ View", key=f"view_{file_path}", use_container_width=True):
+                    st.session_state.view_file_modal = file_path
     
     # Add uploaded files
     uploaded_file_paths = []
@@ -547,10 +745,27 @@ with st.sidebar:
             file_path = process_uploaded_file(uploaded_file)
             uploaded_file_paths.append(file_path)
             all_selected_files.append(file_path)
-            st.text(f"📄 {uploaded_file.name}")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(f"📄 {uploaded_file.name}")
+            with col2:
+                if st.button("👁️ View", key=f"view_{file_path}", use_container_width=True):
+                    st.session_state.view_file_modal = file_path
     
     if not all_selected_files:
         st.warning("No files selected. Please select folders or upload files.")
+    
+    # Show file preview modal if a file is selected
+    if st.session_state.view_file_modal:
+        # Use st.expander as fallback since st.dialog decorator pattern is complex
+        with st.expander("📄 File Preview", expanded=True):
+            show_file_preview_modal(st.session_state.view_file_modal)
+            st.markdown("---")
+            col1, col2 = st.columns([4, 1])
+            with col2:
+                if st.button("❌ Close", use_container_width=True, type="secondary"):
+                    st.session_state.view_file_modal = None
+                    st.rerun()
 
 # Main content area
 st.header("💬 Enter Your Prompt")
@@ -569,12 +784,34 @@ with col1:
 with col2:
     clear_button = st.button("🗑️ Clear", use_container_width=True)
 
+# Initialize modal state
+if 'show_clear_modal' not in st.session_state:
+    st.session_state.show_clear_modal = False
+
+# Show modal when clear button is clicked
 if clear_button:
-    st.session_state.messages = []
-    st.session_state.output_files = []
-    st.session_state.processed_dataframes = {}
-    st.session_state.selected_sheets = {}
-    st.rerun()
+    st.session_state.show_clear_modal = True
+
+# Modal for clear confirmation
+if st.session_state.show_clear_modal:
+    # Use st.expander as fallback since st.dialog decorator pattern is complex
+    with st.expander("⚠️ Confirm Clear", expanded=True):
+        st.markdown("**Are you sure you want to clear all data?**")
+        st.markdown("This will remove all messages, files, and processed dataframes.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Yes, Clear", type="primary", use_container_width=True):
+                st.session_state.messages = []
+                st.session_state.output_files = []
+                st.session_state.processed_dataframes = {}
+                st.session_state.selected_sheets = {}
+                st.session_state.show_clear_modal = False
+                st.rerun()
+        with col2:
+            if st.button("❌ Cancel", use_container_width=True):
+                st.session_state.show_clear_modal = False
+                st.rerun()
 
 # Process submission
 if submit_button:
