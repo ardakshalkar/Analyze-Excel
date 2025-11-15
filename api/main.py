@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
+import numpy as np
 import os
 import shutil
 import tempfile
@@ -63,6 +64,9 @@ class TaskStatus(BaseModel):
     progress: Optional[float] = None
     result: Optional[dict] = None
     error: Optional[str] = None
+
+class PreviewFilesRequest(BaseModel):
+    file_paths: List[str]
 
 # Helper functions
 def load_api_key():
@@ -356,6 +360,45 @@ async def list_files():
     
     return {"files": files}
 
+def clean_dataframe_for_json(df: pd.DataFrame) -> list:
+    """Convert DataFrame to JSON-compliant list of dicts, replacing NaN/Inf with None"""
+    if df.empty:
+        return []
+    
+    # Make a copy to avoid modifying the original
+    df_cleaned = df.copy()
+    
+    # Replace Infinity and -Infinity with None
+    df_cleaned = df_cleaned.replace([float('inf'), float('-inf')], None)
+    
+    # Replace NaN, NaT, and other null values with None using where() method
+    # This is more reliable than fillna() for converting to None
+    df_cleaned = df_cleaned.where(pd.notnull(df_cleaned), None)
+    
+    # Convert to dict - pandas will convert numpy types to native Python types
+    result = df_cleaned.to_dict(orient="records")
+    
+    # Final pass: ensure all values are JSON-serializable
+    # Convert any remaining non-serializable values
+    def make_json_serializable(obj):
+        if isinstance(obj, (np.integer, np.floating)):
+            return obj.item() if not (np.isnan(obj) or np.isinf(obj)) else None
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        return obj
+    
+    # Recursively clean the result
+    cleaned_result = []
+    for record in result:
+        cleaned_record = {}
+        for key, value in record.items():
+            cleaned_record[key] = make_json_serializable(value)
+        cleaned_result.append(cleaned_record)
+    
+    return cleaned_result
+
 @app.get("/api/files/{file_path:path}/preview")
 async def preview_file(file_path: str):
     """Preview file data"""
@@ -373,7 +416,7 @@ async def preview_file(file_path: str):
                     "rows": len(df),
                     "columns": len(df.columns),
                     "column_names": df.columns.tolist(),
-                    "preview": df.head(100).to_dict(orient="records")
+                    "preview": clean_dataframe_for_json(df.head(100))
                 }
             return {"type": "excel", "sheets": preview}
         elif isinstance(data, pd.DataFrame):
@@ -382,8 +425,59 @@ async def preview_file(file_path: str):
                 "rows": len(data),
                 "columns": len(data.columns),
                 "column_names": data.columns.tolist(),
-                "preview": data.head(100).to_dict(orient="records")
+                "preview": clean_dataframe_for_json(data.head(100))
             }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/files/preview")
+async def preview_files(request: PreviewFilesRequest):
+    """Preview multiple files at once - returns preview data for all files"""
+    try:
+        result = {}
+        
+        for file_path in request.file_paths:
+            if not os.path.exists(file_path):
+                result[file_path] = {
+                    "error": "File not found",
+                    "file_name": os.path.basename(file_path)
+                }
+                continue
+            
+            try:
+                data = read_excel_or_csv(file_path)
+                
+                if isinstance(data, dict):
+                    # Multi-sheet Excel
+                    preview = {}
+                    for sheet_name, df in data.items():
+                        preview[sheet_name] = {
+                            "rows": len(df),
+                            "columns": len(df.columns),
+                            "column_names": df.columns.tolist(),
+                            "preview": clean_dataframe_for_json(df.head(100))
+                        }
+                    result[file_path] = {
+                        "type": "excel",
+                        "file_name": os.path.basename(file_path),
+                        "sheets": preview
+                    }
+                elif isinstance(data, pd.DataFrame):
+                    result[file_path] = {
+                        "type": "csv" if file_path.endswith('.csv') else "excel",
+                        "file_name": os.path.basename(file_path),
+                        "rows": len(data),
+                        "columns": len(data.columns),
+                        "column_names": data.columns.tolist(),
+                        "preview": clean_dataframe_for_json(data.head(100))
+                    }
+            except Exception as e:
+                result[file_path] = {
+                    "error": str(e),
+                    "file_name": os.path.basename(file_path)
+                }
+        
+        return {"files": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

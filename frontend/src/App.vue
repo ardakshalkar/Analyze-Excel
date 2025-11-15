@@ -58,13 +58,6 @@
                   v-model="selectedFiles"
                 />
                 <label :for="file.path">{{ file.name }}</label>
-                <button 
-                  class="secondary" 
-                  @click="previewFile(file.path)"
-                  style="padding: 6px 12px; font-size: 14px;"
-                >
-                  👁️ Preview
-                </button>
               </div>
             </div>
           </div>
@@ -79,21 +72,21 @@
           multiple
         />
         <div v-if="uploadedFiles.length > 0" style="margin-top: 20px;">
-          <h3>Uploaded Files</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3>Uploaded Files</h3>
+            <button 
+              class="primary" 
+              @click="previewAllFiles"
+              style="padding: 8px 16px; font-size: 14px;"
+            >
+              👁️ File Preview
+            </button>
+          </div>
           <ul class="file-list">
             <li v-for="file in uploadedFiles" :key="file.path" class="file-item">
               <div class="file-info">
                 <div class="file-name">{{ file.name }}</div>
                 <div class="file-path">{{ file.path }}</div>
-              </div>
-              <div class="file-actions">
-                <button 
-                  class="secondary" 
-                  @click="previewFile(file.path)"
-                  style="padding: 6px 12px; font-size: 14px;"
-                >
-                  👁️ Preview
-                </button>
               </div>
             </li>
           </ul>
@@ -104,21 +97,26 @@
         <div v-if="selectedFiles.length === 0" class="status warning">
           No files selected
         </div>
-        <ul v-else class="file-list">
-          <li v-for="filePath in selectedFiles" :key="filePath" class="file-item">
-            <div class="file-info">
-              <div class="file-name">{{ getFileName(filePath) }}</div>
-              <div class="file-path">{{ filePath }}</div>
-            </div>
-            <button 
-              class="danger" 
-              @click="removeFile(filePath)"
-              style="padding: 6px 12px; font-size: 14px;"
-            >
-              ❌ Remove
-            </button>
-          </li>
-        </ul>
+        <div v-else>
+          <div class="status info" style="margin-bottom: 15px;">
+            📊 {{ selectedFiles.length }} file(s) selected
+          </div>
+          <ul class="file-list">
+            <li v-for="filePath in selectedFiles" :key="filePath" class="file-item">
+              <div class="file-info">
+                <div class="file-name">{{ getFileName(filePath) }}</div>
+                <div class="file-path">{{ filePath }}</div>
+              </div>
+              <button 
+                class="danger" 
+                @click="removeFile(filePath)"
+                style="padding: 6px 12px; font-size: 14px;"
+              >
+                ❌ Remove
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -183,58 +181,111 @@
       </div>
     </div>
 
-    <div v-if="previewData" class="container">
-      <h2>👁️ File Preview</h2>
-      <button class="secondary" @click="previewData = null" style="margin-bottom: 15px;">
-        ❌ Close Preview
-      </button>
-      <div v-if="previewData.type === 'excel'">
-        <div v-for="(sheet, sheetName) in previewData.sheets" :key="sheetName">
-          <h3>Sheet: {{ sheetName }}</h3>
-          <div class="status info">
-            Rows: {{ sheet.rows }}, Columns: {{ sheet.columns }}
-          </div>
-          <div style="overflow-x: auto; margin-top: 15px;">
-            <table style="width: 100%; border-collapse: collapse;">
-              <thead>
-                <tr>
-                  <th v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
-                    {{ col }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, idx) in sheet.preview.slice(0, 10)" :key="idx">
-                  <td v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
-                    {{ row[col] }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+
+    <!-- All Files Preview Modal with Tabs -->
+    <div v-if="allFilesPreview && allFilesPreviewData" class="modal-overlay" @click.self="closeAllFilesPreview">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h2>📄 All Files Preview</h2>
+          <button class="secondary" @click="closeAllFilesPreview" style="padding: 8px 16px; background: rgba(255, 255, 255, 0.2); color: white;">
+            ❌ Close
+          </button>
         </div>
-      </div>
-      <div v-else>
-        <div class="status info">
-          Rows: {{ previewData.rows }}, Columns: {{ previewData.columns }}
-        </div>
-        <div style="overflow-x: auto; margin-top: 15px;">
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr>
-                <th v-for="col in previewData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
-                  {{ col }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, idx) in previewData.preview.slice(0, 10)" :key="idx">
-                <td v-for="col in previewData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
-                  {{ row[col] }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="modal-body">
+          <div class="status info" style="margin-bottom: 15px;">
+            Previewing {{ Object.keys(allFilesPreviewData.files).length }} file(s). Use tabs below to switch between files.
+          </div>
+          
+          <!-- Tabs for each file -->
+          <div class="tabs" style="margin-bottom: 20px; overflow-x: auto;">
+            <button 
+              v-for="(fileData, filePath) in allFilesPreviewData.files" 
+              :key="filePath"
+              class="tab" 
+              :class="{ active: activePreviewTab === filePath }"
+              @click="activePreviewTab = filePath"
+            >
+              📊 {{ fileData.file_name || getFileName(filePath) }}
+            </button>
+          </div>
+
+          <!-- Content for active tab -->
+          <div v-for="(fileData, filePath) in allFilesPreviewData.files" :key="filePath">
+            <div v-if="activePreviewTab === filePath">
+              <div v-if="fileData.error" class="status error">
+                Error loading {{ fileData.file_name }}: {{ fileData.error }}
+              </div>
+              <div v-else-if="fileData.type === 'excel'">
+                <!-- Sheet tabs for Excel files -->
+                <div v-if="Object.keys(fileData.sheets).length > 1" class="tabs" style="margin-bottom: 20px; overflow-x: auto;">
+                  <button 
+                    v-for="(sheet, sheetName) in fileData.sheets" 
+                    :key="sheetName"
+                    class="tab" 
+                    :class="{ active: getActiveSheet(filePath) === sheetName }"
+                    @click="setActiveSheet(filePath, sheetName)"
+                  >
+                    📋 {{ sheetName }}
+                  </button>
+                </div>
+                
+                <!-- Display active sheet -->
+                <template v-if="getActiveSheet(filePath)">
+                  <div :key="`${filePath}-${getActiveSheet(filePath)}`">
+                    <template v-for="(sheet, sheetName) in fileData.sheets" :key="sheetName">
+                      <div v-if="getActiveSheet(filePath) === sheetName">
+                        <h3>Sheet: {{ sheetName }}</h3>
+                        <div class="status info">
+                          Rows: {{ sheet.rows }}, Columns: {{ sheet.columns }}
+                        </div>
+                        <div style="overflow-x: auto; margin-top: 15px;">
+                          <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                              <tr>
+                                <th v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
+                                  {{ col }}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(row, idx) in sheet.preview.slice(0, 10)" :key="idx">
+                                <td v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
+                                  {{ row[col] }}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <div v-else>
+                <div class="status info">
+                  Rows: {{ fileData.rows }}, Columns: {{ fileData.columns }}
+                </div>
+                <div style="overflow-x: auto; margin-top: 15px;">
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                      <tr>
+                        <th v-for="col in fileData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
+                          {{ col }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, idx) in fileData.preview.slice(0, 10)" :key="idx">
+                        <td v-for="col in fileData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
+                          {{ row[col] }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -259,7 +310,10 @@ export default {
       analyzing: false,
       currentTask: null,
       taskPollInterval: null,
-      previewData: null
+      allFilesPreview: false,
+      allFilesPreviewData: null,
+      activePreviewTab: null,
+      activeSheets: {} // Track active sheet for each file: { filePath: sheetName }
     }
   },
   computed: {
@@ -269,8 +323,11 @@ export default {
   },
   mounted() {
     this.loadFolders()
+    // Add ESC key listener to close modal
+    document.addEventListener('keydown', this.handleKeyDown)
   },
   beforeUnmount() {
+    document.removeEventListener('keydown', this.handleKeyDown)
     if (this.taskPollInterval) {
       clearInterval(this.taskPollInterval)
     }
@@ -308,14 +365,63 @@ export default {
         }
       }
     },
-    async previewFile(filePath) {
+    async previewAllFiles() {
+      if (this.selectedFiles.length === 0) {
+        alert('No files selected')
+        return
+      }
+      
       try {
-        const response = await axios.get(`${API_BASE}/files/${encodeURIComponent(filePath)}/preview`)
-        this.previewData = response.data
-        this.activeTab = 'selected'
+        this.allFilesPreview = true
+        const response = await axios.post(`${API_BASE}/files/preview`, {
+          file_paths: this.selectedFiles
+        })
+        this.allFilesPreviewData = response.data
+        // Set first file as active tab
+        const firstFilePath = Object.keys(response.data.files)[0]
+        this.activePreviewTab = firstFilePath
+        
+        // Initialize active sheets for each Excel file
+        this.activeSheets = {}
+        for (const [filePath, fileData] of Object.entries(response.data.files)) {
+          if (fileData.type === 'excel' && fileData.sheets) {
+            const firstSheet = Object.keys(fileData.sheets)[0]
+            this.activeSheets[filePath] = firstSheet
+          }
+        }
       } catch (error) {
-        console.error('Error previewing file:', error)
-        alert('Error previewing file: ' + error.response?.data?.detail || error.message)
+        console.error('Error previewing files:', error)
+        alert('Error previewing files: ' + (error.response?.data?.detail || error.message))
+        this.allFilesPreview = false
+        this.allFilesPreviewData = null
+      }
+    },
+    closeAllFilesPreview() {
+      this.allFilesPreview = false
+      this.allFilesPreviewData = null
+      this.activePreviewTab = null
+      this.activeSheets = {}
+    },
+    getActiveSheet(filePath) {
+      if (this.activeSheets[filePath]) {
+        return this.activeSheets[filePath]
+      }
+      // Default to first sheet if not set
+      if (this.allFilesPreviewData?.files[filePath]?.sheets) {
+        const firstSheet = Object.keys(this.allFilesPreviewData.files[filePath].sheets)[0]
+        // Set it as active if not already set
+        if (!this.activeSheets[filePath]) {
+          this.$set(this.activeSheets, filePath, firstSheet)
+        }
+        return firstSheet
+      }
+      return null
+    },
+    setActiveSheet(filePath, sheetName) {
+      // Create a new object to ensure reactivity
+      this.activeSheets = {
+        ...this.activeSheets,
+        [filePath]: sheetName
       }
     },
     removeFile(filePath) {
@@ -395,6 +501,12 @@ export default {
         'error': 'error'
       }
       return classes[status] || 'info'
+    },
+    handleKeyDown(event) {
+      // Close modal on ESC key
+      if (event.key === 'Escape' && this.allFilesPreview) {
+        this.closeAllFilesPreview()
+      }
     }
   }
 }
