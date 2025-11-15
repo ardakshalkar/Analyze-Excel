@@ -12,9 +12,9 @@ echo.
 echo Press Ctrl+C to stop all services
 echo.
 
-start "FastAPI Backend" cmd /k "python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000"
+start "FastAPI Backend" cmd /k "cd /d %~dp0 && python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000"
 timeout /t 3 /nobreak >nul
-start "Vue.js Frontend" cmd /k "cd frontend && npm run dev"
+start "Vue.js Frontend" cmd /k "cd /d %~dp0frontend && npx vite"
 
 echo.
 echo Services started! Check the opened windows for status.
