@@ -203,9 +203,9 @@
                         <div class="status info">
                           Rows: {{ sheet.rows }}, Columns: {{ sheet.columns }}
                         </div>
-                        <div style="overflow-x: auto; margin-top: 15px;">
+                        <div style="overflow-x: auto; margin-top: 15px; max-height: 600px; overflow-y: auto;">
                           <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
+                            <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 10;">
                               <tr>
                                 <th v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
                                   {{ col }}
@@ -213,13 +213,16 @@
                               </tr>
                             </thead>
                             <tbody>
-                              <tr v-for="(row, idx) in sheet.preview.slice(0, 10)" :key="idx">
+                              <tr v-for="(row, idx) in sheet.preview" :key="idx">
                                 <td v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
                                   {{ row[col] }}
                                 </td>
                               </tr>
                             </tbody>
                           </table>
+                        </div>
+                        <div v-if="sheet.preview.length < sheet.rows" class="status info" style="margin-top: 10px;">
+                          Showing {{ sheet.preview.length }} of {{ sheet.rows }} rows
                         </div>
                       </div>
                     </template>
@@ -231,9 +234,9 @@
                 <div class="status info">
                   Rows: {{ fileData.rows }}, Columns: {{ fileData.columns }}
                 </div>
-                <div style="overflow-x: auto; margin-top: 15px;">
+                <div style="overflow-x: auto; margin-top: 15px; max-height: 600px; overflow-y: auto;">
                   <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
+                    <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 10;">
                       <tr>
                         <th v-for="col in fileData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
                           {{ col }}
@@ -241,13 +244,16 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, idx) in fileData.preview.slice(0, 10)" :key="idx">
+                      <tr v-for="(row, idx) in fileData.preview" :key="idx">
                         <td v-for="col in fileData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
                           {{ row[col] }}
                         </td>
                       </tr>
                     </tbody>
                   </table>
+                </div>
+                <div v-if="fileData.preview.length < fileData.rows" class="status info" style="margin-top: 10px;">
+                  Showing {{ fileData.preview.length }} of {{ fileData.rows }} rows
                 </div>
               </div>
             </div>
@@ -292,6 +298,10 @@
       <div v-if="currentTask.error" class="status error">
         Error: {{ currentTask.error }}
       </div>
+      <div v-if="currentTask && currentTask.status === 'running' && streamingOutput" class="status info" style="margin-top: 15px;">
+        <strong>Streaming Output:</strong>
+        <pre style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">{{ streamingOutput }}</pre>
+      </div>
       <div v-if="currentTask.result" class="status success">
         <h3>✅ Analysis Complete!</h3>
         <div style="margin-top: 15px;">
@@ -305,15 +315,24 @@
               <div class="file-info">
                 <div class="file-name">{{ getFileName(file) }}</div>
               </div>
-              <a 
-                :href="`/api/download/${encodeURIComponent(file)}`" 
-                target="_blank"
-                style="text-decoration: none;"
-              >
-                <button style="padding: 6px 12px; font-size: 14px;">
-                  📥 Download
+              <div style="display: flex; gap: 10px;">
+                <button 
+                  @click="previewGeneratedFile(file)"
+                  style="padding: 6px 12px; font-size: 14px;"
+                  class="primary"
+                >
+                  👁️ Preview
                 </button>
-              </a>
+                <a 
+                  :href="`/api/download/${encodeURIComponent(file)}`" 
+                  target="_blank"
+                  style="text-decoration: none;"
+                >
+                  <button style="padding: 6px 12px; font-size: 14px;">
+                    📥 Download
+                  </button>
+                </a>
+              </div>
             </li>
           </ul>
         </div>
@@ -377,9 +396,9 @@
                         <div class="status info">
                           Rows: {{ sheet.rows }}, Columns: {{ sheet.columns }}
                         </div>
-                        <div style="overflow-x: auto; margin-top: 15px;">
+                        <div style="overflow-x: auto; margin-top: 15px; max-height: 600px; overflow-y: auto;">
                           <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
+                            <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 10;">
                               <tr>
                                 <th v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
                                   {{ col }}
@@ -387,13 +406,16 @@
                               </tr>
                             </thead>
                             <tbody>
-                              <tr v-for="(row, idx) in sheet.preview.slice(0, 10)" :key="idx">
+                              <tr v-for="(row, idx) in sheet.preview" :key="idx">
                                 <td v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
                                   {{ row[col] }}
                                 </td>
                               </tr>
                             </tbody>
                           </table>
+                        </div>
+                        <div v-if="sheet.preview.length < sheet.rows" class="status info" style="margin-top: 10px;">
+                          Showing {{ sheet.preview.length }} of {{ sheet.rows }} rows
                         </div>
                       </div>
                     </template>
@@ -414,7 +436,7 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, idx) in fileData.preview.slice(0, 10)" :key="idx">
+                      <tr v-for="(row, idx) in fileData.preview" :key="idx">
                         <td v-for="col in fileData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
                           {{ row[col] }}
                         </td>
@@ -423,6 +445,102 @@
                   </table>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generated File Preview Modal -->
+    <div v-if="generatedFilePreview && generatedFilePreviewData" class="modal-overlay" @click.self="closeGeneratedFilePreview">
+      <div class="modal-content" @click.stop style="max-width: 95%; max-height: 95vh;">
+        <div class="modal-header">
+          <h2>📄 Preview: {{ getFileName(generatedFilePreviewPath) }}</h2>
+          <button class="secondary" @click="closeGeneratedFilePreview" style="padding: 8px 16px; background: rgba(255, 255, 255, 0.2); color: white;">
+            ❌ Close
+          </button>
+        </div>
+        <div class="modal-body" style="max-height: calc(95vh - 120px); overflow-y: auto;">
+          <div v-if="loadingGeneratedPreview" class="status info">
+            Loading preview...
+          </div>
+          <div v-else-if="generatedFilePreviewData.error" class="status error">
+            Error: {{ generatedFilePreviewData.error }}
+          </div>
+          <div v-else-if="generatedFilePreviewData.type === 'excel'">
+            <!-- Sheet tabs for Excel files -->
+            <div v-if="Object.keys(generatedFilePreviewData.sheets).length > 1" class="tabs" style="margin-bottom: 20px; overflow-x: auto;">
+              <button 
+                v-for="(sheet, sheetName) in generatedFilePreviewData.sheets" 
+                :key="sheetName"
+                class="tab" 
+                :class="{ active: getActiveSheet(generatedFilePreviewPath) === sheetName }"
+                @click="setActiveSheet(generatedFilePreviewPath, sheetName)"
+              >
+                📋 {{ sheetName }}
+              </button>
+            </div>
+            
+            <!-- Display active sheet -->
+            <template v-if="getActiveSheet(generatedFilePreviewPath)">
+              <div :key="`${generatedFilePreviewPath}-${getActiveSheet(generatedFilePreviewPath)}`">
+                <template v-for="(sheet, sheetName) in generatedFilePreviewData.sheets" :key="sheetName">
+                  <div v-if="getActiveSheet(generatedFilePreviewPath) === sheetName">
+                    <h3>Sheet: {{ sheetName }}</h3>
+                    <div class="status info">
+                      Rows: {{ sheet.rows }}, Columns: {{ sheet.columns }}
+                    </div>
+                    <div style="overflow-x: auto; margin-top: 15px; max-height: 70vh; overflow-y: auto;">
+                      <table style="width: 100%; border-collapse: collapse;">
+                        <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 10;">
+                          <tr>
+                            <th v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
+                              {{ col }}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(row, idx) in sheet.preview" :key="idx">
+                            <td v-for="col in sheet.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
+                              {{ row[col] }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-if="sheet.preview.length < sheet.rows" class="status info" style="margin-top: 10px;">
+                      Showing {{ sheet.preview.length }} of {{ sheet.rows }} rows
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+          <div v-else>
+            <h3>{{ getFileName(generatedFilePreviewPath) }}</h3>
+            <div class="status info">
+              Rows: {{ generatedFilePreviewData.rows }}, Columns: {{ generatedFilePreviewData.columns }}
+            </div>
+            <div style="overflow-x: auto; margin-top: 15px; max-height: 70vh; overflow-y: auto;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 10;">
+                  <tr>
+                    <th v-for="col in generatedFilePreviewData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd; background: #f8f9fa;">
+                      {{ col }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, idx) in generatedFilePreviewData.preview" :key="idx">
+                    <td v-for="col in generatedFilePreviewData.column_names" :key="col" style="padding: 8px; border: 1px solid #ddd;">
+                      {{ row[col] }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="generatedFilePreviewData.preview.length < generatedFilePreviewData.rows" class="status info" style="margin-top: 10px;">
+              Showing {{ generatedFilePreviewData.preview.length }} of {{ generatedFilePreviewData.rows }} rows
             </div>
           </div>
         </div>
@@ -450,12 +568,18 @@ export default {
       analyzing: false,
       currentTask: null,
       taskPollInterval: null,
+      streamingOutput: '', // For streaming responses
+      useStreaming: true, // Toggle for streaming vs polling
       allFilesPreview: false,
       allFilesPreviewData: null,
       activePreviewTab: null,
       activeSheets: {}, // Track active sheet for each file: { filePath: sheetName }
       loadingPreview: false,
-      previewData: null // Preview data for the Preview tab
+      previewData: null, // Preview data for the Preview tab
+      generatedFilePreview: false,
+      generatedFilePreviewData: null,
+      generatedFilePreviewPath: null,
+      loadingGeneratedPreview: false
     }
   },
   computed: {
@@ -597,6 +721,34 @@ export default {
       this.activePreviewTab = null
       this.activeSheets = {}
     },
+    async previewGeneratedFile(filePath) {
+      this.generatedFilePreview = true
+      this.generatedFilePreviewPath = filePath
+      this.loadingGeneratedPreview = true
+      
+      try {
+        const response = await axios.get(`${API_BASE}/files/${encodeURIComponent(filePath)}/preview`)
+        this.generatedFilePreviewData = response.data
+        
+        // Initialize active sheet for Excel files
+        if (response.data.type === 'excel' && response.data.sheets) {
+          const firstSheet = Object.keys(response.data.sheets)[0]
+          this.activeSheets[filePath] = firstSheet
+        }
+      } catch (error) {
+        console.error('Error loading generated file preview:', error)
+        this.generatedFilePreviewData = {
+          error: error.response?.data?.detail || error.message || 'Failed to load preview'
+        }
+      } finally {
+        this.loadingGeneratedPreview = false
+      }
+    },
+    closeGeneratedFilePreview() {
+      this.generatedFilePreview = false
+      this.generatedFilePreviewData = null
+      this.generatedFilePreviewPath = null
+    },
     getActiveSheet(filePath) {
       if (this.activeSheets[filePath]) {
         return this.activeSheets[filePath]
@@ -680,27 +832,159 @@ export default {
       
       this.analyzing = true
       this.currentTask = null
+      this.streamingOutput = ''
       
+      if (this.useStreaming) {
+        // Use streaming endpoint
+        await this.submitAnalysisStream()
+      } else {
+        // Use polling endpoint
+        try {
+          const response = await axios.post(`${API_BASE}/analyze`, {
+            prompt: this.prompt,
+            file_paths: this.selectedFiles,
+            timeout_seconds: 300
+          })
+          
+          const taskId = response.data.task_id
+          this.currentTask = {
+            task_id: taskId,
+            status: 'pending',
+            progress: 0
+          }
+          
+          // Start polling for task status
+          this.startPolling(taskId)
+        } catch (error) {
+          console.error('Error starting analysis:', error)
+          alert('Error starting analysis: ' + (error.response?.data?.detail || error.message))
+          this.analyzing = false
+        }
+      }
+    },
+    async submitAnalysisStream() {
       try {
-        const response = await axios.post(`${API_BASE}/analyze`, {
-          prompt: this.prompt,
-          file_paths: this.selectedFiles,
-          timeout_seconds: 300
+        const response = await fetch(`${API_BASE}/analyze/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: this.prompt,
+            file_paths: this.selectedFiles,
+            timeout_seconds: 300
+          })
         })
         
-        const taskId = response.data.task_id
-        this.currentTask = {
-          task_id: taskId,
-          status: 'pending',
-          progress: 0
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
         }
         
-        // Start polling for task status
-        this.startPolling(taskId)
-      } catch (error) {
-        console.error('Error starting analysis:', error)
-        alert('Error starting analysis: ' + error.response?.data?.detail || error.message)
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        
+        // Initialize task
+        this.currentTask = {
+          task_id: null,
+          status: 'running',
+          progress: 0,
+          result: null,
+          error: null
+        }
+        
+        while (true) {
+          const { done, value } = await reader.read()
+          
+          if (done) {
+            break
+          }
+          
+          // Decode chunk
+          buffer += decoder.decode(value, { stream: true })
+          
+          // Process complete SSE messages
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || '' // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                this.handleStreamEvent(data)
+              } catch (e) {
+                console.error('Error parsing SSE data:', e, line)
+              }
+            }
+          }
+        }
+        
+        // Process remaining buffer
+        if (buffer.trim()) {
+          const lines = buffer.split('\n')
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                this.handleStreamEvent(data)
+              } catch (e) {
+                console.error('Error parsing SSE data:', e, line)
+              }
+            }
+          }
+        }
+        
         this.analyzing = false
+      } catch (error) {
+        console.error('Error in streaming analysis:', error)
+        alert('Error in streaming analysis: ' + error.message)
+        this.analyzing = false
+        if (this.currentTask) {
+          this.currentTask.status = 'error'
+          this.currentTask.error = error.message
+        }
+      }
+    },
+    handleStreamEvent(data) {
+      switch (data.type) {
+        case 'status':
+          if (data.task_id) {
+            this.currentTask.task_id = data.task_id
+          }
+          if (data.status) {
+            this.currentTask.status = data.status
+          }
+          if (data.progress !== undefined) {
+            this.currentTask.progress = data.progress
+          }
+          break
+        case 'progress':
+          if (data.progress !== undefined) {
+            this.currentTask.progress = data.progress
+          }
+          break
+        case 'chunk':
+        case 'output':
+          // Append streaming output
+          if (data.content) {
+            this.streamingOutput += data.content
+            // Update intermediate steps in result if it exists
+            if (this.currentTask.result) {
+              this.currentTask.result.intermediate_steps = this.streamingOutput
+            }
+          }
+          break
+        case 'result':
+          this.currentTask.result = data.result
+          break
+        case 'error':
+          this.currentTask.status = 'error'
+          this.currentTask.error = data.error
+          this.analyzing = false
+          break
+        case 'heartbeat':
+          // Just keep connection alive
+          break
       }
     },
     startPolling(taskId) {
@@ -752,8 +1036,12 @@ export default {
     },
     handleKeyDown(event) {
       // Close modal on ESC key
-      if (event.key === 'Escape' && this.allFilesPreview) {
-        this.closeAllFilesPreview()
+      if (event.key === 'Escape') {
+        if (this.allFilesPreview) {
+          this.closeAllFilesPreview()
+        } else if (this.generatedFilePreview) {
+          this.closeGeneratedFilePreview()
+        }
       }
     }
   }

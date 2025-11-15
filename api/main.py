@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
@@ -19,6 +19,7 @@ import sys
 import traceback
 from functools import wraps
 import threading
+import queue
 
 # Load environment variables
 load_dotenv()
@@ -416,7 +417,7 @@ async def preview_file(file_path: str):
                     "rows": len(df),
                     "columns": len(df.columns),
                     "column_names": df.columns.tolist(),
-                    "preview": clean_dataframe_for_json(df.head(100))
+                    "preview": clean_dataframe_for_json(df.head(1000))  # Show up to 1000 rows
                 }
             return {"type": "excel", "sheets": preview}
         elif isinstance(data, pd.DataFrame):
@@ -425,7 +426,7 @@ async def preview_file(file_path: str):
                 "rows": len(data),
                 "columns": len(data.columns),
                 "column_names": data.columns.tolist(),
-                "preview": clean_dataframe_for_json(data.head(100))
+                "preview": clean_dataframe_for_json(data.head(1000))  # Show up to 1000 rows
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -455,7 +456,7 @@ async def preview_files(request: PreviewFilesRequest):
                             "rows": len(df),
                             "columns": len(df.columns),
                             "column_names": df.columns.tolist(),
-                            "preview": clean_dataframe_for_json(df.head(100))
+                            "preview": clean_dataframe_for_json(df.head(1000))  # Show up to 1000 rows
                         }
                     result[file_path] = {
                         "type": "excel",
@@ -469,7 +470,7 @@ async def preview_files(request: PreviewFilesRequest):
                         "rows": len(data),
                         "columns": len(data.columns),
                         "column_names": data.columns.tolist(),
-                        "preview": clean_dataframe_for_json(data.head(100))
+                        "preview": clean_dataframe_for_json(data.head(1000))  # Show up to 1000 rows
                     }
             except Exception as e:
                 result[file_path] = {
@@ -515,6 +516,239 @@ async def analyze_files(request: AnalysisRequest, background_tasks: BackgroundTa
     )
     
     return {"task_id": task_id, "status": "pending", "message": "Analysis started"}
+
+@app.post("/api/analyze/stream")
+async def analyze_files_stream(request: AnalysisRequest):
+    """Start analysis task with streaming responses"""
+    api_key = load_api_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key not found")
+    
+    # Validate file paths
+    for file_path in request.file_paths:
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    
+    async def generate_stream():
+        """Generator function for Server-Sent Events"""
+        try:
+            # Generate task ID
+            task_id = hashlib.md5(f"{request.prompt}{time.time()}".encode()).hexdigest()[:12]
+            
+            # Initialize task
+            analysis_tasks[task_id] = {
+                "status": "running",
+                "progress": 0.0,
+                "prompt": request.prompt,
+                "file_paths": request.file_paths
+            }
+            
+            # Send initial status
+            yield f"data: {json.dumps({'type': 'status', 'task_id': task_id, 'status': 'running', 'progress': 0.0})}\n\n"
+            
+            # Get existing files
+            existing_files = get_existing_output_files(OUTPUT_FOLDER)
+            
+            # Generate summary filename
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            prompt_hash = hashlib.md5(request.prompt.encode()).hexdigest()[:8]
+            summary_filename = f"summary_{timestamp}_{prompt_hash}.txt"
+            summary_filepath = os.path.join(OUTPUT_FOLDER, summary_filename)
+            
+            # Configure interpreter
+            interpreter.api_key = api_key
+            interpreter.auto_run = True
+            interpreter.verbose = False
+            
+            # Create context
+            file_context = get_file_context(request.file_paths)
+            file_paths_str = "\n".join([f"  - {fp}" for fp in request.file_paths])
+            
+            system_context = f"""You are an expert data analyst working with Excel and CSV files.
+
+Available files:
+{file_context}
+
+File paths (use these exact paths in your code):
+{file_paths_str}
+
+Output folder: {OUTPUT_FOLDER}
+
+IMPORTANT INSTRUCTIONS:
+1. When reading files, use the exact file paths provided above
+2. When saving results, save to: {OUTPUT_FOLDER}
+3. Use pandas (pd.read_excel, pd.read_csv) to read files
+4. Use df.to_excel() or df.to_csv() to save results
+5. Always use index=False when saving Excel files
+6. Provide clear explanations of what you're doing
+7. Answer in Russian
+
+CRITICAL RESTRICTIONS:
+- DO NOT create HTML files (df.to_html() is FORBIDDEN)
+- DO NOT use webbrowser.open() or any function that opens files in a browser
+- DO NOT use os.startfile() or subprocess to open files
+- When displaying dataframes, use print() or df.head() instead of creating HTML files
+- Save results ONLY as Excel (.xlsx) or CSV (.csv) files, NEVER as HTML
+
+CRITICAL: You MUST create a summary file at the end of your analysis!
+8. At the end of your analysis, you MUST write a summary file to: '{summary_filepath}'
+9. Use this EXACT code to create the summary file:
+   with open(r'{summary_filepath}', 'w', encoding='utf-8') as f:
+       f.write('Your summary content here with main findings, analysis results, and key insights')
+10. The summary should contain:
+   - Main findings from the analysis
+   - Key insights and patterns discovered
+   - Important conclusions
+   - Any significant trends or changes identified
+11. DO NOT skip creating this summary file - it is required!"""
+            
+            # Create a queue for streaming output
+            output_queue = queue.Queue()
+            output_buffer = io.StringIO()
+            old_stdout = sys.stdout
+            captured_output = []
+            
+            # Custom stdout that captures and queues output
+            class StreamingStdout:
+                def __init__(self, original_stdout, queue, buffer):
+                    self.original_stdout = original_stdout
+                    self.queue = queue
+                    self.buffer = buffer
+                
+                def write(self, text):
+                    if text:
+                        self.buffer.write(text)
+                        self.queue.put(text)
+                        captured_output.append(text)
+                
+                def flush(self):
+                    self.original_stdout.flush()
+            
+            streaming_stdout = StreamingStdout(old_stdout, output_queue, output_buffer)
+            sys.stdout = streaming_stdout
+            
+            # Update progress
+            analysis_tasks[task_id]["progress"] = 0.3
+            yield f"data: {json.dumps({'type': 'progress', 'progress': 0.3})}\n\n"
+            
+            # Run interpreter in a thread
+            interpreter_result = [None]
+            interpreter_error = [None]
+            
+            def run_interpreter_thread():
+                try:
+                    if hasattr(interpreter, 'reset'):
+                        interpreter.reset()
+                    
+                    # Try to use streaming if available
+                    if hasattr(interpreter, 'chat_stream'):
+                        # Use streaming chat if available
+                        for chunk in interpreter.chat_stream(f"{system_context}\n\nUser request: {request.prompt}"):
+                            if chunk:
+                                output_queue.put(f"data: {json.dumps({'type': 'chunk', 'content': str(chunk)})}\n\n")
+                    else:
+                        # Fallback to regular chat
+                        result = interpreter.chat(f"{system_context}\n\nUser request: {request.prompt}")
+                        interpreter_result[0] = result
+                except Exception as e:
+                    interpreter_error[0] = e
+                finally:
+                    sys.stdout = old_stdout
+                    output_queue.put(None)  # Signal completion
+            
+            # Start interpreter thread
+            interpreter_thread = threading.Thread(target=run_interpreter_thread, daemon=True)
+            interpreter_thread.start()
+            
+            # Stream output while interpreter is running
+            last_output_time = time.time()
+            while interpreter_thread.is_alive() or not output_queue.empty():
+                try:
+                    # Get output with timeout
+                    chunk = output_queue.get(timeout=0.5)
+                    if chunk is None:
+                        break
+                    # Format as SSE message
+                    yield f"data: {json.dumps({'type': 'output', 'content': chunk})}\n\n"
+                    last_output_time = time.time()
+                except queue.Empty:
+                    # Check if thread is still alive
+                    if not interpreter_thread.is_alive():
+                        break
+                    # Send heartbeat
+                    if time.time() - last_output_time > 5:
+                        yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                        last_output_time = time.time()
+            
+            # Wait for thread to complete
+            interpreter_thread.join(timeout=1)
+            
+            # Check for errors
+            if interpreter_error[0]:
+                raise interpreter_error[0]
+            
+            # Get final output
+            response_text = output_buffer.getvalue()
+            sys.stdout = old_stdout
+            
+            # Update progress
+            analysis_tasks[task_id]["progress"] = 0.8
+            yield f"data: {json.dumps({'type': 'progress', 'progress': 0.8})}\n\n"
+            
+            # Check for newly generated files
+            generated_files = []
+            current_files = get_existing_output_files(OUTPUT_FOLDER)
+            for file_path in current_files:
+                if file_path not in existing_files:
+                    generated_files.append(file_path)
+            
+            # Read summary file
+            main_answer = ""
+            if os.path.exists(summary_filepath):
+                with open(summary_filepath, "r", encoding="utf-8") as f:
+                    main_answer = f.read().strip()
+            
+            if not main_answer:
+                main_answer = "Analysis completed. Please check the generated files for results."
+                if generated_files:
+                    main_answer += f"\n\nGenerated files: {', '.join([os.path.basename(f) for f in generated_files])}"
+            
+            # Update task status
+            analysis_tasks[task_id]["status"] = "completed"
+            analysis_tasks[task_id]["progress"] = 1.0
+            analysis_tasks[task_id]["result"] = {
+                "main_answer": main_answer,
+                "intermediate_steps": response_text,
+                "generated_files": generated_files,
+                "answer_file": summary_filepath if os.path.exists(summary_filepath) else None
+            }
+            
+            # Send final result
+            yield f"data: {json.dumps({'type': 'result', 'result': analysis_tasks[task_id]['result']})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'status': 'completed', 'progress': 1.0})}\n\n"
+            
+        except TimeoutError as e:
+            error_msg = str(e)
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+            if task_id in analysis_tasks:
+                analysis_tasks[task_id]["status"] = "error"
+                analysis_tasks[task_id]["error"] = error_msg
+        except Exception as e:
+            error_msg = f"Error during execution: {str(e)}\n{traceback.format_exc()}"
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+            if task_id in analysis_tasks:
+                analysis_tasks[task_id]["status"] = "error"
+                analysis_tasks[task_id]["error"] = error_msg
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @app.get("/api/tasks/{task_id}")
 async def get_task_status(task_id: str):
