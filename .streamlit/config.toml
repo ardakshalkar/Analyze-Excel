@@ -1,0 +1,22 @@
+[server]
+# Disable auto-reload on save for better performance
+runOnSave = false
+
+# Enable headless mode (optional, for production)
+# headless = true
+
+# Increase file watcher timeout (helps with large files)
+fileWatcherType = "poll"
+
+[browser]
+# Automatically open browser (set to false for production)
+gatherUsageStats = false
+
+[theme]
+# Optional: customize theme
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
+

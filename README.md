@@ -1,6 +1,9 @@
-# Analyze & Excel - Streamlit Application
+# Analyze & Excel - Multi-Platform Application
 
-A Streamlit application that allows users to analyze Excel and CSV files using AI-powered code interpreter.
+A comprehensive data analysis application with three interfaces:
+- **Streamlit App**: Original web interface for data analysis
+- **FastAPI Backend**: RESTful API for programmatic access
+- **Vue.js Frontend**: Modern web interface built with Vue 3
 
 ## Features
 
@@ -8,195 +11,276 @@ A Streamlit application that allows users to analyze Excel and CSV files using A
 - **Support for Excel and CSV**: Works with `.xlsx`, `.xls`, and `.csv` files
 - **AI-Powered Analysis**: Enter prompts to analyze data using OpenAI's code interpreter
 - **Output Management**: Generated Excel files are saved to an output folder
-- **DataFrame Viewer**: View and explore generated Excel files directly in the app
-- **Response History**: View previous prompts and responses
+- **Multiple Interfaces**: Choose between Streamlit, Vue.js frontend, or API access
+- **Real-time Progress**: Track analysis progress in real-time (Vue.js frontend)
+
+## Project Structure
+
+```
+Analyze&Excel/
+├── app.py                 # Streamlit application
+├── api/
+│   └── main.py           # FastAPI backend
+├── frontend/             # Vue.js frontend
+│   ├── src/
+│   │   ├── App.vue       # Main Vue component
+│   │   ├── main.js       # Vue entry point
+│   │   └── style.css     # Styles
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── requirements.txt      # Python dependencies
+├── run_app.bat          # Run Streamlit app
+├── run_api.bat          # Run FastAPI server
+└── run_frontend.bat     # Run Vue.js frontend
+```
 
 ## Installation
 
-1. Clone or download this repository
+### 1. Python Dependencies
 
-2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Set up your OpenAI API key:
-   - Create a `.env` file in the root directory
-   - Add your OpenAI API key:
-   ```
-   OPENAI_API_KEY=your_actual_api_key_here
-   ```
-   - Alternatively, you can set the environment variable directly:
-   ```bash
-   # Windows
-   set OPENAI_API_KEY=your_actual_api_key_here
-   
-   # Linux/Mac
-   export OPENAI_API_KEY=your_actual_api_key_here
-   ```
+### 2. Node.js Dependencies (for Vue.js frontend)
 
-## Quick Start
-
-### 1. Install Dependencies
 ```bash
-pip install -r requirements.txt
+cd frontend
+npm install
 ```
 
-### 2. Set Up API Key
-Create a `.env` file in the project root:
+### 3. Environment Setup
+
+Create a `.env` file in the root directory:
+
 ```
 OPENAI_API_KEY=your_actual_api_key_here
 ```
 
-### 3. Run the App
+## Running the Applications
 
-**Windows users can simply double-click `run_app.bat`**
+### Option 1: Streamlit App (Original)
 
-Or run manually:
+**Windows:**
+```bash
+run_app.bat
+```
+
+**Manual:**
 ```bash
 streamlit run app.py
 ```
 
-The app will open automatically in your browser at `http://localhost:8501`
+Access at: `http://localhost:8501`
 
-**Alternative if `streamlit` command doesn't work:**
+### Option 2: FastAPI Backend + Vue.js Frontend
+
+**Step 1: Start FastAPI Backend**
+
+**Windows:**
 ```bash
-python -m streamlit run app.py
+run_api.bat
 ```
 
-## Usage
-
-1. **Select Files:**
-   - In the sidebar, select predefined folders (create folders like `input_folder_1`, `input_folder_2`, etc. if needed)
-   - OR upload Excel/CSV files directly using the file uploader
-
-2. **Enter Your Prompt:**
-   - Type what you want to analyze in the text area
-   - Example: "Analyze sales data and create a monthly summary"
-
-3. **Submit:**
-   - Click "🚀 Submit" to process your request
-   - Wait for the analysis to complete (may take a few minutes)
-
-4. **View Results:**
-   - See the generated response in the main area
-   - Download generated Excel files
-   - Explore resulting dataframes in the interactive viewer
-
-## Folder Structure
-
-```
-Analyze&Excel/
-├── app.py                 # Main Streamlit application
-├── requirements.txt       # Python dependencies
-├── .env                   # Environment variables (create from .env.example)
-├── input_folder_1/       # Predefined input folder (optional)
-├── input_folder_2/       # Predefined input folder (optional)
-├── uploads/              # Uploaded files storage (auto-created)
-└── output/               # Generated Excel files (auto-created)
+**Manual:**
+```bash
+python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Notes
+API will be available at: `http://localhost:8000`
+API docs at: `http://localhost:8000/docs`
 
-- The app automatically creates `uploads/` and `output/` folders
-- Generated files are saved in the `output/` folder
-- You can create predefined input folders manually or let users upload files
-- Make sure you have a valid OpenAI API key with access to GPT-4 or GPT-3.5-turbo
+**Step 2: Start Vue.js Frontend**
 
-## Timeout Configuration
+**Windows:**
+```bash
+run_frontend.bat
+```
 
-The app includes a timeout mechanism to prevent requests from running indefinitely. By default, requests timeout after 5 minutes (300 seconds).
+**Manual:**
+```bash
+cd frontend
+npm run dev
+```
 
-### Adjusting Timeout
+Frontend will be available at: `http://localhost:5173`
 
-1. **Via UI**: Use the "Timeout Settings" in the sidebar to adjust the timeout (1-60 minutes)
-2. **For Complex Operations**: Increase the timeout if you're working with large files or complex analysis
+### Option 3: FastAPI Backend Only (API Access)
 
-### Troubleshooting Timeout Issues
-
-If you encounter timeout errors:
-
-1. **Increase Timeout**: Use the sidebar timeout settings to increase the limit
-2. **Simplify Requests**: Break complex requests into smaller, simpler tasks
-3. **Reduce File Size**: Work with smaller datasets or sample data first
-4. **Check File Complexity**: Very large or complex Excel files may require more time
-
-### Streamlit Server Timeout
-
-If you're running Streamlit in production, you may also need to configure the server timeout:
+Start the FastAPI server and use the REST API directly:
 
 ```bash
-# Run with increased timeout (10 minutes)
-streamlit run app.py --server.runOnSave=false --server.headless=true
+python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Or create a `.streamlit/config.toml` file:
-```toml
-[server]
-runOnSave = false
-headless = true
+## API Endpoints
+
+### Health & Info
+- `GET /` - API information
+- `GET /health` - Health check
+
+### Files
+- `GET /api/folders` - Get available input folders
+- `GET /api/files` - List all available files
+- `POST /api/upload` - Upload a file
+- `GET /api/files/{file_path}/preview` - Preview file data
+- `GET /api/download/{file_path}` - Download a file
+
+### Analysis
+- `POST /api/analyze` - Start analysis task
+  ```json
+  {
+    "prompt": "Analyze the data...",
+    "file_paths": ["path/to/file.xlsx"],
+    "timeout_seconds": 300
+  }
+  ```
+- `GET /api/tasks/{task_id}` - Get task status
+- `GET /api/output` - List output files
+
+## Usage Examples
+
+### Using Streamlit
+
+1. Select files from folders or upload files
+2. Enter your analysis prompt
+3. Click "Submit" and wait for results
+4. View and download generated files
+
+### Using Vue.js Frontend
+
+1. Open `http://localhost:5173`
+2. Select files from folders or upload new files
+3. Enter your analysis prompt
+4. Click "Submit" and watch real-time progress
+5. Download generated files when complete
+
+### Using API Directly
+
+```python
+import requests
+
+# Upload a file
+with open('data.xlsx', 'rb') as f:
+    response = requests.post('http://localhost:8000/api/upload', files={'file': f})
+    file_info = response.json()
+
+# Start analysis
+analysis_request = {
+    "prompt": "Analyze sales data and create monthly summary",
+    "file_paths": [file_info['file']['path']],
+    "timeout_seconds": 300
+}
+response = requests.post('http://localhost:8000/api/analyze', json=analysis_request)
+task_id = response.json()['task_id']
+
+# Check status
+status = requests.get(f'http://localhost:8000/api/tasks/{task_id}').json()
+print(status)
 ```
 
-## Example Prompts
+## Configuration
 
-- "Create a summary report with total sales by month"
-- "Analyze the data and identify top 10 customers"
-- "Calculate average values for each category"
-- "Merge the two Excel files and create a new combined report"
+### Timeout Settings
+
+Default timeout is 300 seconds (5 minutes). You can adjust it:
+- In Streamlit: Use sidebar timeout settings
+- In API: Pass `timeout_seconds` in the request
+- In Vue.js: Currently uses 300 seconds (can be modified in `App.vue`)
+
+### CORS Settings
+
+FastAPI CORS is configured for:
+- `http://localhost:5173` (Vite default)
+- `http://localhost:3000` (Alternative port)
+- `http://localhost:8080` (Alternative port)
+
+To add more origins, edit `api/main.py`:
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "your-custom-origin"],
+    ...
+)
+```
 
 ## Troubleshooting
 
-### Problem: "streamlit: command not found"
-**Solution:** Use `python -m streamlit run app.py` instead
+### FastAPI Issues
 
-### Problem: "AttributeError: module 'streamlit' has no attribute 'dialog'"
-**Solution:** Upgrade Streamlit to version 1.29.0 or higher:
+**Problem: "ModuleNotFoundError: No module named 'uvicorn'"**
 ```bash
-python -m pip install --upgrade streamlit>=1.29.0
+pip install uvicorn[standard]
 ```
 
-### Problem: "ModuleNotFoundError: No module named 'xxx'"
-**Solution:** Install missing packages:
+**Problem: "Port 8000 already in use"**
+Change the port in `run_api.bat` or command:
 ```bash
-python -m pip install -r requirements.txt
+python -m uvicorn api.main:app --reload --port 8001
 ```
 
-### Problem: NumPy Compatibility Error (`AttributeError: module 'numpy' has no attribute 'bool8'`)
-**Solution:** Downgrade NumPy to a compatible version:
-```bash
-python -m pip install "numpy>=1.24.0,<2.0.0" --force-reinstall
-```
+### Vue.js Issues
 
-### Problem: Commands work in IDE but not in terminal
-**Solution:** 
-- Use **Anaconda Prompt** instead of regular Command Prompt (if you have Anaconda)
-- Or check which Python your terminal is using:
-  ```bash
-  python -c "import sys; print(sys.executable)"
-  ```
-- Make sure it matches the Python that has the packages installed
+**Problem: "npm: command not found"**
+Install Node.js from [nodejs.org](https://nodejs.org/)
 
-### Problem: Port 8501 already in use
-**Solution:** Use a different port:
-```bash
-streamlit run app.py --server.port 8502
-```
+**Problem: "Port 5173 already in use"**
+Vite will automatically use the next available port, or edit `vite.config.js`
+
+**Problem: "Cannot connect to API"**
+- Make sure FastAPI is running on port 8000
+- Check CORS settings in `api/main.py`
+- Verify proxy settings in `frontend/vite.config.js`
+
+### General Issues
+
+See the original README section for Streamlit-specific troubleshooting.
+
+## Development
+
+### Adding New API Endpoints
+
+1. Edit `api/main.py`
+2. Add your route handler
+3. Update Vue.js frontend if needed (`frontend/src/App.vue`)
+
+### Customizing Vue.js Frontend
+
+- Main component: `frontend/src/App.vue`
+- Styles: `frontend/src/style.css`
+- API configuration: `frontend/src/App.vue` (API_BASE constant)
 
 ## Deployment
 
-### Streamlit Cloud Deployment
+### Streamlit Cloud
+See original README for Streamlit Cloud deployment.
 
-⚠️ **IMPORTANT:** Set Python version to **3.12** (or 3.11) in Streamlit Cloud settings before deploying!
+### FastAPI + Vue.js Deployment
 
-1. Push your code to GitHub (make sure repository is public or you have Pro)
-2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub
-3. Click "New app" → Select repository and branch → Set main file: `app.py`
-4. **In Settings, change Python version to 3.12** (to avoid tiktoken build errors)
-5. Set secrets (API Key) in app settings:
-   ```toml
-   OPENAI_API_KEY = "your_api_key_here"
+1. **Backend**: Deploy FastAPI using:
+   - Docker
+   - Cloud platforms (Heroku, Railway, etc.)
+   - VPS with gunicorn/uvicorn
+
+2. **Frontend**: Build and deploy:
+   ```bash
+   cd frontend
+   npm run build
    ```
-6. Click "Deploy"
+   Deploy `dist/` folder to:
+   - Netlify
+   - Vercel
+   - GitHub Pages
+   - Any static hosting
 
-**Note:** `runtime.txt` should specify Python 3.12 for best compatibility.
+3. **Update API URL**: Change `API_BASE` in `frontend/src/App.vue` to your production API URL
 
+## Notes
+
+- All three applications can run simultaneously
+- They share the same `output/` and `uploads/` folders
+- Make sure OpenAI API key is set in `.env` file
+- FastAPI and Vue.js are designed to work together
+- Streamlit app works independently
