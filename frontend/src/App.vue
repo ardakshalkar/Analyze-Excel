@@ -298,17 +298,68 @@
       <div v-if="currentTask.error" class="status error">
         Error: {{ currentTask.error }}
       </div>
-      <div v-if="currentTask && currentTask.status === 'running' && streamingOutput" class="status info" style="margin-top: 15px;">
-        <strong>Streaming Output:</strong>
-        <pre style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">{{ streamingOutput }}</pre>
-      </div>
-      <div v-if="currentTask.result" class="status success">
-        <h3>✅ Analysis Complete!</h3>
-        <div style="margin-top: 15px;">
-          <strong>Main Answer:</strong>
-          <pre style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap;">{{ currentTask.result.main_answer }}</pre>
+      <div v-if="currentTask && (currentTask.result || streamingOutput || currentTask.status === 'running')" class="status success" style="margin-top: 15px;">
+        <div v-if="currentTask.result" style="margin-bottom: 15px;">
+          <h3>✅ Analysis Complete!</h3>
         </div>
-        <div v-if="currentTask.result.generated_files && currentTask.result.generated_files.length > 0" style="margin-top: 15px;">
+        
+        <!-- Tabs for Analysis Result and Thinking Process -->
+        <div class="tabs" style="margin-top: 15px; margin-bottom: 15px;">
+          <button 
+            class="tab" 
+            :class="{ active: currentTask.activeTab === 'result' || !currentTask.activeTab }"
+            @click="currentTask.activeTab = 'result'"
+          >
+            📋 Analysis Result
+          </button>
+          <button 
+            class="tab" 
+            :class="{ active: currentTask.activeTab === 'thinking' }"
+            @click="currentTask.activeTab = 'thinking'"
+          >
+            🧠 Thinking Process
+            <span v-if="currentTask.status === 'running'" class="loading" style="display: inline-block; margin-left: 5px;"></span>
+          </button>
+        </div>
+        
+        <!-- Analysis Result Tab -->
+        <div v-if="!currentTask.activeTab || currentTask.activeTab === 'result'">
+          <div v-if="currentTask.result" style="margin-top: 15px;">
+            <strong>Main Answer:</strong>
+            <pre style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap;">{{ currentTask.result.main_answer }}</pre>
+          </div>
+          <div v-else-if="currentTask.status === 'running'" class="status info">
+            Analysis in progress... Results will appear here when complete.
+          </div>
+          <div v-else class="status info">
+            No results yet.
+          </div>
+        </div>
+        
+        <!-- Thinking Process Tab -->
+        <div v-if="currentTask.activeTab === 'thinking'">
+          <div style="margin-top: 15px;">
+            <div v-if="streamingOutput || currentTask.result?.intermediate_steps" style="position: relative;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <strong>Thinking Process:</strong>
+                <button 
+                  @click="copyThinkingProcess"
+                  class="secondary"
+                  style="padding: 4px 8px; font-size: 12px;"
+                >
+                  📋 Copy
+                </button>
+              </div>
+              <pre style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; max-height: 600px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px;">{{ thinkingProcessText }}</pre>
+            </div>
+            <div v-else class="status info">
+              No thinking process available yet.
+            </div>
+          </div>
+        </div>
+        
+        <!-- Generated Files Section (shown in both tabs) -->
+        <div v-if="currentTask.result && currentTask.result.generated_files && currentTask.result.generated_files.length > 0" style="margin-top: 15px;">
           <strong>Generated Files:</strong>
           <ul class="file-list" style="margin-top: 10px;">
             <li v-for="file in currentTask.result.generated_files" :key="file" class="file-item">
@@ -585,6 +636,12 @@ export default {
   computed: {
     canSubmit() {
       return this.selectedFiles.length > 0 && this.prompt.trim().length > 0 && !this.analyzing
+    },
+    thinkingProcessText() {
+      if (this.currentTask?.result?.intermediate_steps) {
+        return this.currentTask.result.intermediate_steps
+      }
+      return this.streamingOutput || ''
     }
   },
   mounted() {
@@ -1042,6 +1099,24 @@ export default {
         } else if (this.generatedFilePreview) {
           this.closeGeneratedFilePreview()
         }
+      }
+    },
+    copyThinkingProcess() {
+      const text = this.thinkingProcessText
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          alert('Thinking process copied to clipboard!')
+        }).catch(err => {
+          console.error('Failed to copy:', err)
+          // Fallback: select text
+          const textarea = document.createElement('textarea')
+          textarea.value = text
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+          alert('Thinking process copied to clipboard!')
+        })
       }
     }
   }

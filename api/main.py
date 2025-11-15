@@ -627,6 +627,72 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
             streaming_stdout = StreamingStdout(old_stdout, output_queue, output_buffer)
             sys.stdout = streaming_stdout
             
+            # Intercept functions that open windows
+            import webbrowser
+            import subprocess
+            
+            original_webbrowser_open = webbrowser.open
+            original_startfile = None
+            if hasattr(os, 'startfile'):
+                original_startfile = os.startfile
+            original_subprocess_call = subprocess.call
+            original_subprocess_Popen = subprocess.Popen
+            
+            def intercepted_webbrowser_open(url, new=0, autoraise=True):
+                """Intercept webbrowser.open() calls and capture the URL instead"""
+                message = f"[Intercepted webbrowser.open() call - URL: {url}]\n"
+                message += "Note: Browser windows are disabled. Data is captured in the output instead.\n"
+                output_queue.put(message)
+                output_buffer.write(message)
+                return False  # Don't actually open
+            
+            def intercepted_startfile(filepath, operation='open'):
+                """Intercept os.startfile() calls and capture the file path instead"""
+                message = f"[Intercepted os.startfile() call - File: {filepath}, Operation: {operation}]\n"
+                message += "Note: File opening is disabled. Please use the preview/download buttons instead.\n"
+                output_queue.put(message)
+                output_buffer.write(message)
+                return None  # Don't actually open
+            
+            def intercepted_subprocess_call(*args, **kwargs):
+                """Intercept subprocess.call() that might open files"""
+                # Check if it's trying to open a file
+                if args and len(args) > 0:
+                    cmd = args[0]
+                    if isinstance(cmd, (list, tuple)) and len(cmd) > 0:
+                        cmd_str = str(cmd[0]).lower()
+                        # Common commands that open files
+                        if any(x in cmd_str for x in ['start', 'open', 'xdg-open', 'see']):
+                            message = f"[Intercepted subprocess.call() that would open file: {cmd}]\n"
+                            message += "Note: File opening is disabled. Please use the preview/download buttons instead.\n"
+                            output_queue.put(message)
+                            output_buffer.write(message)
+                            return 0  # Return success but don't actually open
+                # For other subprocess calls, allow them but log
+                return original_subprocess_call(*args, **kwargs)
+            
+            # Patch pandas DataFrame to_html to prevent HTML file creation
+            original_to_html = None
+            if hasattr(pd.DataFrame, 'to_html'):
+                original_to_html = pd.DataFrame.to_html
+                
+                def intercepted_to_html(self, *args, **kwargs):
+                    """Intercept DataFrame.to_html() calls"""
+                    message = "[Intercepted DataFrame.to_html() call]\n"
+                    message += "Note: HTML file creation is disabled. Use print(df) or df.head() to display data instead.\n"
+                    output_queue.put(message)
+                    output_buffer.write(message)
+                    # Return empty string instead of HTML
+                    return ""
+                
+                pd.DataFrame.to_html = intercepted_to_html
+            
+            # Patch the functions
+            webbrowser.open = intercepted_webbrowser_open
+            if original_startfile:
+                os.startfile = intercepted_startfile
+            subprocess.call = intercepted_subprocess_call
+            
             # Update progress
             analysis_tasks[task_id]["progress"] = 0.3
             yield f"data: {json.dumps({'type': 'progress', 'progress': 0.3})}\n\n"
@@ -634,6 +700,9 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
             # Run interpreter in a thread
             interpreter_result = [None]
             interpreter_error = [None]
+            
+            # Store original_to_html in outer scope for restoration
+            original_to_html_outer = original_to_html
             
             def run_interpreter_thread():
                 try:
@@ -654,6 +723,17 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
                     interpreter_error[0] = e
                 finally:
                     sys.stdout = old_stdout
+                    # Restore original functions
+                    try:
+                        webbrowser.open = original_webbrowser_open
+                        if original_startfile:
+                            os.startfile = original_startfile
+                        subprocess.call = original_subprocess_call
+                        subprocess.Popen = original_subprocess_Popen
+                        if original_to_html_outer:
+                            pd.DataFrame.to_html = original_to_html_outer
+                    except:
+                        pass
                     output_queue.put(None)  # Signal completion
             
             # Start interpreter thread
@@ -690,6 +770,18 @@ CRITICAL: You MUST create a summary file at the end of your analysis!
             # Get final output
             response_text = output_buffer.getvalue()
             sys.stdout = old_stdout
+            
+            # Restore original functions
+            try:
+                webbrowser.open = original_webbrowser_open
+                if original_startfile:
+                    os.startfile = original_startfile
+                subprocess.call = original_subprocess_call
+                subprocess.Popen = original_subprocess_Popen
+                if original_to_html_outer:
+                    pd.DataFrame.to_html = original_to_html_outer
+            except:
+                pass
             
             # Update progress
             analysis_tasks[task_id]["progress"] = 0.8
