@@ -58,6 +58,10 @@ if 'selected_sheets' not in st.session_state:
     st.session_state.selected_sheets = {}  # {file_path: sheet_name}
 if 'active_tab_index' not in st.session_state:
     st.session_state.active_tab_index = {}
+if 'selected_folder_files' not in st.session_state:
+    st.session_state.selected_folder_files = {}  # {folder_name: [file_paths]}
+if 'uploaded_file_paths' not in st.session_state:
+    st.session_state.uploaded_file_paths = []  # List of uploaded file paths
 
 # Constants
 INPUT_FOLDERS = ["input_folder_1", "input_folder_2", "input_folder_3"]  # Predefined folder names
@@ -697,63 +701,154 @@ with st.sidebar:
     
     st.header("📁 File Selection")
     
-    # Option 1: Select predefined folders
-    st.subheader("Select Predefined Folders")
-    available_folders = get_available_folders()
-    
-    selected_folders = []
-    if available_folders:
-        for folder in available_folders:
-            if st.checkbox(f"📂 {folder}", key=f"folder_{folder}"):
-                selected_folders.append(folder)
-    else:
-        st.info("No predefined folders found. You can create folders like 'input_folder_1', 'input_folder_2', etc.")
-    
-    # Option 2: Upload files
-    st.subheader("Upload Files")
-    uploaded_files = st.file_uploader(
-        "Upload Excel or CSV files",
-        type=['xlsx', 'xls', 'csv'],
-        accept_multiple_files=True,
-        key="file_uploader"
-    )
-    
-    # Display selected files
-    st.subheader("Selected Files")
-    all_selected_files = []
-    
     # Initialize modal state for file previews
     if 'view_file_modal' not in st.session_state:
         st.session_state.view_file_modal = None
     
-    # Add files from folders
-    for folder in selected_folders:
-        folder_files = load_files_from_folder(folder)
+    # Collect all selected files from folders and uploads
+    all_selected_files = []
+    for folder, folder_files in st.session_state.selected_folder_files.items():
         all_selected_files.extend(folder_files)
-        for file_path in folder_files:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.text(f"📄 {os.path.basename(file_path)}")
-            with col2:
-                if st.button("👁️ View", key=f"view_{file_path}", use_container_width=True):
-                    st.session_state.view_file_modal = file_path
+    all_selected_files.extend(st.session_state.uploaded_file_paths)
     
-    # Add uploaded files
-    uploaded_file_paths = []
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            file_path = process_uploaded_file(uploaded_file)
-            uploaded_file_paths.append(file_path)
+    # Count selected files for tab display
+    selected_count = len(all_selected_files)
+    
+    # Create tabs for Folders, Upload, and Selected
+    tab1, tab2, tab3 = st.tabs([f"📂 Folders", "⬆️ Upload", f"✅ Selected ({selected_count})"])
+    
+    with tab1:
+        # Folders tab
+        available_folders = get_available_folders()
+        
+        if available_folders:
+            for folder in available_folders:
+                # Get files in folder
+                folder_files = load_files_from_folder(folder)
+                file_count = len(folder_files)
+                
+                # Display folder name with Select button
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(f"**📂 {folder}**")
+                with col2:
+                    if folder in st.session_state.selected_folder_files:
+                        # Show Remove button if folder is already selected
+                        if st.button("Remove", key=f"remove_{folder}", use_container_width=True):
+                            del st.session_state.selected_folder_files[folder]
+                            st.success(f"✅ {folder} removed from selections")
+                            st.rerun()
+                    else:
+                        # Show Select button if folder is not selected
+                        if st.button("Select", key=f"select_{folder}", use_container_width=True):
+                            # Load all files from folder and add to selections
+                            folder_files = load_files_from_folder(folder)
+                            if folder_files:
+                                st.session_state.selected_folder_files[folder] = folder_files
+                                st.success(f"✅ {len(folder_files)} file(s) from {folder} added to selections")
+                                st.rerun()
+                            else:
+                                st.warning(f"⚠️ No Excel or CSV files found in {folder}")
+                
+                # Show files in folder
+                if folder_files:
+                    for file_path in folder_files:
+                        # Check if this file is selected (part of a selected folder)
+                        is_selected = folder in st.session_state.selected_folder_files and file_path in st.session_state.selected_folder_files[folder]
+                        
+                        col1, col2 = st.columns([1, 20])
+                        with col1:
+                            # Show checkbox (read-only, just for visual indication)
+                            st.checkbox("", value=is_selected, disabled=True, key=f"cb_{file_path}")
+                        with col2:
+                            st.text(f"📄 {os.path.basename(file_path)}")
+                else:
+                    st.info(f"No Excel or CSV files found in {folder}")
+                st.markdown("---")
+        else:
+            st.info("No predefined folders found. You can create folders like 'input_folder_1', 'input_folder_2', etc.")
+    
+    with tab2:
+        # Upload tab
+        uploaded_files = st.file_uploader(
+            "Upload Excel or CSV files",
+            type=['xlsx', 'xls', 'csv'],
+            accept_multiple_files=True,
+            key="file_uploader"
+        )
+        
+        # Process uploaded files and store in session state
+        if uploaded_files:
+            new_uploaded_paths = []
+            for uploaded_file in uploaded_files:
+                file_path = process_uploaded_file(uploaded_file)
+                new_uploaded_paths.append(file_path)
+                if file_path not in st.session_state.uploaded_file_paths:
+                    st.session_state.uploaded_file_paths.append(file_path)
+            
+            st.success(f"✅ {len(uploaded_files)} file(s) uploaded and added to selections")
+            st.markdown("---")
+            for file_path in st.session_state.uploaded_file_paths:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text(f"📄 {os.path.basename(file_path)}")
+                with col2:
+                    if st.button("👁️ View", key=f"view_upload_{file_path}", use_container_width=True):
+                        st.session_state.view_file_modal = file_path
+        else:
+            if st.session_state.uploaded_file_paths:
+                st.info(f"📋 {len(st.session_state.uploaded_file_paths)} previously uploaded file(s) in selections")
+                for file_path in st.session_state.uploaded_file_paths:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.text(f"📄 {os.path.basename(file_path)}")
+                    with col2:
+                        if st.button("👁️ View", key=f"view_upload_{file_path}", use_container_width=True):
+                            st.session_state.view_file_modal = file_path
+            else:
+                st.info("No files uploaded yet. Use the file uploader above to add files.")
+    
+    with tab3:
+        # Selected files tab
+        # Collect all files for display
+        display_files = []
+        for folder, folder_files in st.session_state.selected_folder_files.items():
+            display_files.extend(folder_files)
+        display_files.extend(st.session_state.uploaded_file_paths)
+        
+        if display_files:
+            st.info(f"📊 Total: {len(display_files)} file(s) selected")
+            for file_path in display_files:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    # Show which folder the file came from
+                    file_folder = None
+                    for folder, folder_files in st.session_state.selected_folder_files.items():
+                        if file_path in folder_files:
+                            file_folder = folder
+                            break
+                    if file_folder:
+                        st.text(f"📄 {os.path.basename(file_path)} (from {file_folder})")
+                    elif file_path in st.session_state.uploaded_file_paths:
+                        st.text(f"📄 {os.path.basename(file_path)} (uploaded)")
+                    else:
+                        st.text(f"📄 {os.path.basename(file_path)}")
+                with col2:
+                    if st.button("👁️ View", key=f"view_{file_path}", use_container_width=True):
+                        st.session_state.view_file_modal = file_path
+        else:
+            st.warning("No files selected. Please select folders or upload files.")
+    
+    # Final collection of all selected files (after tabs, to ensure uploaded files are included)
+    # This ensures all_selected_files is up-to-date for the submit button
+    all_selected_files = []
+    for folder, folder_files in st.session_state.selected_folder_files.items():
+        all_selected_files.extend(folder_files)
+    
+    # Add uploaded files from session state
+    for file_path in st.session_state.uploaded_file_paths:
+        if file_path not in all_selected_files:
             all_selected_files.append(file_path)
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.text(f"📄 {uploaded_file.name}")
-            with col2:
-                if st.button("👁️ View", key=f"view_{file_path}", use_container_width=True):
-                    st.session_state.view_file_modal = file_path
-    
-    if not all_selected_files:
-        st.warning("No files selected. Please select folders or upload files.")
     
     # Show file preview modal if a file is selected
     if st.session_state.view_file_modal:
@@ -806,6 +901,8 @@ if st.session_state.show_clear_modal:
                 st.session_state.output_files = []
                 st.session_state.processed_dataframes = {}
                 st.session_state.selected_sheets = {}
+                st.session_state.selected_folder_files = {}
+                st.session_state.uploaded_file_paths = []
                 st.session_state.show_clear_modal = False
                 st.rerun()
         with col2:
